@@ -25,6 +25,7 @@ else
 end
 
 add_requires("nlohmann_json v3.12.0", { alias = "nlohmann_json", system = false})
+add_requires("geographiclib 2.1.1",   { alias = "geographiclib", system = false, configs = {shared = false}})
 
 target("NativeApp")
     if not is_plat("android") then
@@ -35,7 +36,7 @@ target("NativeApp")
     add_includedirs("utils")
     add_files("utils/*.cpp")
     -- packages
-    add_packages("nlohmann_json")
+    add_packages("nlohmann_json", "geographiclib")
     -- 3rds
     add_includedirs(".", "ThirdParty")
     -- imgui

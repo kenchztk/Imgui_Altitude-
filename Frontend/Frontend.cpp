@@ -48,10 +48,6 @@ void Frontend::update()
     active = active || io.KeyCtrl || io.KeyShift || io.KeyAlt || io.KeySuper;
     if (active) m_lastActiveTime = std::chrono::steady_clock::now();
 
-    // 仅到刷新周期才发起请求；查询走缓存，避免每帧加锁遍历 JSON
-    Backend::Instance().tryRefreshUsage();
-    Backend::Instance().getCachedUsage(session_usage, weekly_usage, monthly_usage);
-
 #if defined(__APPLE__)
     // macOS 毛玻璃:主内容窗口半透明,让底层 NSVisualEffectView 透出
     ImGuiStyle& stk = ImGui::GetStyle();

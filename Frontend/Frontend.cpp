@@ -63,51 +63,8 @@ void Frontend::update()
     ImGui::SetWindowPos(ImVec2(0, 0));
     ImGui::SetWindowSize(io.DisplaySize);
     
+    // TODO：绘制主界面
 
-    ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x - 240.0f, 0));
-    ImGui::SameLine();
-    ImGui::Button( ICON_FA_GEAR " 设置" );
-    ImGui::SameLine();
-    ImGui::Button( ICON_FA_CIRCLE_USER " 登录" );
-    ImGui::SameLine();
-    ImGui::Button( ICON_FA_POWER_OFF " 退出" ); 
-
-    ImGui::Separator();
-
-    // 浏览器入口：点击后在独立 WKWebView 窗口中加载目标 URL。
-    ImGui::Dummy(ImVec2(0.0f, 8.0f));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-    if (ImGui::Button("Open Baidu"))
-    {
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Close WebView"))
-    {
-    }
-
-    // 自动化点击演示：打开页面 -> 等待加载 -> 轮询查找元素 -> 点击 -> 等待跳转 -> 回调。
-    // selector 需用 Safari 开发者工具（右键检查元素）确认实际值后替换 PUT_REAL_SELECTOR_HERE。
-    if (ImGui::Button("Open & Click"))
-    {
-
-    }
-    ImGui::SameLine();
-
-    // Cookies 持久化：把当前 WKWebView 关联的 cookies 导出到本地 JSON，
-    // 或从本地 JSON 恢复到当前 WKWebView（自动 reload）。
-    ImGui::Dummy(ImVec2(0.0f, 6.0f));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-    if (ImGui::Button("Save Cookies"))
-    {
-        // WebViewPanel::Instance().exportCookies();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Load Cookies"))
-    {
-        // WebViewPanel::Instance().importCookies();
-    }
     ImGui::End();
 #if defined(__APPLE__)
     ImGui::PopStyleColor();

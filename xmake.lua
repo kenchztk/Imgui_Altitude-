@@ -24,6 +24,7 @@ else
     set_runtimes("MD")
 end
 
+add_requires("fmt 12.2.0", { alias = "fmt", system = false, configs = {header_only = true}})
 add_requires("nlohmann_json v3.12.0", { alias = "nlohmann_json", system = false})
 add_requires("geographiclib 2.1.1",   { alias = "geographiclib", system = false, configs = {shared = false}})
 
@@ -36,7 +37,7 @@ target("NativeApp")
     add_includedirs("utils")
     add_files("utils/*.cpp")
     -- packages
-    add_packages("nlohmann_json", "geographiclib")
+    add_packages("geographiclib", "nlohmann_json", "fmt")
     -- 3rds
     add_includedirs(".", "ThirdParty")
     -- imgui
@@ -49,7 +50,7 @@ target("NativeApp")
     -- IconFontCppHeaders
     add_includedirs("ThirdParty/IconFontCppHeaders")
     -- spdlog
-    add_defines("SPDLOG_USE_STD_FORMAT", "SPDLOG_COMPILED_LIB")
+    add_defines("SPDLOG_FMT_EXTERNAL", "FMT_HEADER_ONLY=1", "SPDLOG_COMPILED_LIB")
     add_includedirs("ThirdParty/spdlog/include")
     add_files("ThirdParty/spdlog/src/*.cpp")
 
@@ -67,12 +68,13 @@ target("NativeApp")
         -- add_links("WebView2Loader.dll")
     elseif is_plat("macosx") then
         add_files("*.mm")
+        add_files("Backend/*.mm")
         for _,f in ipairs({"osx", "metal"}) do
             add_files("ThirdParty/imgui/backends/imgui_impl_" .. f .. ".mm")
         end
         add_cxflags("-Wall", "-Wextra")
         add_mxflags("-fno-objc-arc")
-        add_frameworks("AppKit", "Metal", "MetalKit", "QuartzCore", "GameController")
+        add_frameworks("AppKit", "Metal", "MetalKit", "QuartzCore", "GameController", "CoreLocation", "CoreMotion")
     elseif is_plat("android") then
         set_kind("shared")
         set_arch("arm64-v8a")
@@ -109,6 +111,16 @@ target("NativeApp")
             local dest = path.join("android/app/libs/arm64-v8a", libname)
             os.cp(target:targetfile(), dest)
             print("✅ 已拷贝到 Android 项目: " .. dest)
+            -- 拷贝 EGM96 geoid 数据到 assets，供运行时 AAssetManager 读取
+            local geoid_src = "assets/geoid/egm96-5.pgm"
+            if os.isfile(geoid_src) then
+                local geoid_dest_dir = "android/app/src/main/assets/geoid"
+                os.mkdir(geoid_dest_dir)
+                os.cp(geoid_src, path.join(geoid_dest_dir, "egm96-5.pgm"))
+                print("✅ 已拷贝 EGM96 数据: " .. path.join(geoid_dest_dir, "egm96-5.pgm"))
+            else
+                print("⚠️ 未找到 " .. geoid_src .. "，跳过 EGM96 数据拷贝")
+            end
         
         elseif is_plat("macosx") then
             local pkg_dir = "pkg"
@@ -128,7 +140,12 @@ target("NativeApp")
             os.cp("assets/app/Info.plist", path.join(contents_dir, "Info.plist"))
             -- 设置可执行权限
             os.exec("chmod 755 " .. path.join(macos_dir, target:name()))
-            print("✅ 已打包应用到: " .. app_path)
+            -- 对整个 .app bundle 重新签名（ad-hoc）：
+            -- 链接器自带的 ad-hoc 签名不会绑定 Info.plist，导致 CoreLocation 等依赖
+            -- usage description 的隐私 API 静默失效（授权弹窗不弹）。重新签名让
+            -- Info.plist 与资源被正确封印进签名，TCC 方可识别 app 身份与权限描述。
+            os.exec("codesign --force --deep --sign - " .. app_path)
+            print("✅ 已打包并签名应用到: " .. app_path)
         end
     end)
 target_end()

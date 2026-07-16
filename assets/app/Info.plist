@@ -28,5 +28,7 @@
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>用于获取当前海拔高度</string>
 </dict>
 </plist>

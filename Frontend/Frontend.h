@@ -1,5 +1,6 @@
 #pragma once
 #include "imgui/imgui.h"
+#include "Frontend/AltitudeDisplay.h"
 #include <chrono>
 #ifdef _WIN32
 #  include <d3d11.h>
@@ -34,4 +35,5 @@ class Frontend
         ImVec4 clear_color{0.10f, 0.10f, 0.10f, 1.00f};
         // 最近一次检测到用户交互的时间，用于空闲判定
         std::chrono::steady_clock::time_point m_lastActiveTime{};
+        AltitudeDisplay m_altDisplay;  // 海拔醒目显示模块（4 模式 + 动效）
 };

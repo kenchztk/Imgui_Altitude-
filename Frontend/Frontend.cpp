@@ -8,8 +8,7 @@
 #include "Frontend/Frontend.h"
 #include "Backend/Backend.h"
 #include "StyleManager.h"
-
-static const auto FLAGS = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_UnsavedDocument;
+#include <spdlog/spdlog.h>
 
 Frontend &Frontend::Instance()
 {
@@ -39,8 +38,6 @@ int Frontend::init(float vFontSize, float vGlobalScale)
 
 void Frontend::update()
 {
-    static float session_usage = 0.0f, monthly_usage = 0.0f, weekly_usage = 0.0f;
-
     ImGuiIO& io = ImGui::GetIO();
     // 检测本帧是否有用户交互（鼠标移动/按键/修饰键），刷新活跃时间戳
     bool active = (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f);
@@ -59,7 +56,14 @@ void Frontend::update()
     ImGui::SetWindowPos(ImVec2(0, 0));
     ImGui::SetWindowSize(io.DisplaySize);
     
-    // TODO：绘制主界面
+    // -- 海拔高度显示（4 模式 + 动效）--
+    LocationProvider& loc = Backend::Instance().location();
+    LocationData data = loc.lastKnown();
+    LocationStatus st = loc.status();
+
+    // 委托 AltitudeDisplay 绘制；返回 true 表示有按钮交互，刷新空闲计时
+    if (m_altDisplay.render(data, st, loc, io.DisplaySize))
+        m_lastActiveTime = std::chrono::steady_clock::now();
 
     ImGui::End();
 #if defined(__APPLE__)

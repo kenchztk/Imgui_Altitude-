@@ -1,0 +1,38 @@
+{
+    "configurations": [
+        {
+            "name": "C++ Debug (macOS)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/macosx/arm64/releasedbg/NativeApp",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/macosx/arm64/releasedbg",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        }
+        ,
+        {
+            "name": "C++ Debug (Windows)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/windows/x64/releasedbg/NativeApp.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/windows/x64/releasedbg",
+            "environment": [],
+            "externalConsole": false
+        },
+        {
+            "name": "C++ Debug (Linux)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/linux/x64/releasedbg/NativeApp",
+            "cwd": "${workspaceFolder}/build/linux/x64/releasedbg",
+            "args": [],
+            "MIMode": "gdb"
+        }
+    ],
+    "version": "2.0.0"
+}

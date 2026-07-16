@@ -15,7 +15,9 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <string>
+#include <cstdlib>
 #include "Frontend/Frontend.h"
+#include "Logger.h"
 
 // Data
 static EGLDisplay           g_EglDisplay = EGL_NO_DISPLAY;
@@ -33,6 +35,9 @@ static void MainLoopStep();
 static int ShowSoftKeyboardInput();
 static int PollUnicodeChars();
 static int GetAssetData(const char* filename, void** out_data);
+
+// 由 LocationProviderAndroid.cpp 提供：注册定位 native 方法到 MainActivity
+bool RegisterLocationNatives(struct android_app* app);
 
 // Main code
 static void handleAppCmd(struct android_app* app, int32_t appCmd)
@@ -100,6 +105,12 @@ void Init(struct android_app* app)
     g_App = app;
     ANativeWindow_acquire(g_App->window);
 
+    // 最早初始化日志系统：把 HOME 指向应用内部存储，使 Logger 落到可写目录
+    if (g_App->activity && g_App->activity->internalDataPath)
+        setenv("HOME", g_App->activity->internalDataPath, 1);
+    Logger::Instance().init();
+    spdlog::info("[Android] Init 开始，日志系统已就绪");
+
     // Initialize EGL
     // This is mostly boilerplate code for EGL...
     {
@@ -162,6 +173,9 @@ void Init(struct android_app* app)
     // We load the default font with increased size to improve readability on many devices with "high" DPI.
     // FIXME: Put some effort into DPI awareness.
     // Important: when calling AddFontFromMemoryTTF(), ownership of font_data is transferred by Dear ImGui by default (deleted is handled by Dear ImGui), unless we set FontDataOwnedByAtlas=false in ImFontConfig
+    // 注册定位 native 方法（须在 Frontend::init -> Backend::init -> LocationProviderAndroid 构造之前完成）
+    RegisterLocationNatives(g_App);
+
     Frontend::Instance().init(22.0f, 3.0f);
     //void* font_data;
     //int font_data_size;
@@ -255,6 +269,9 @@ void Shutdown()
     g_EglContext = EGL_NO_CONTEXT;
     g_EglSurface = EGL_NO_SURFACE;
     ANativeWindow_release(g_App->window);
+
+    spdlog::info("[Android] Shutdown 完成");
+    Logger::Instance().shutdown();
 
     g_Initialized = false;
 }

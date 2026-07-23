@@ -106,29 +106,22 @@ void Frontend::initFonts(float size_pixels)
     
     const char* font_paths[] = {
         "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/System/Library/Fonts/PingFang.ttc",
-        // "/Users/kench/Documents/Imgui_AllInOne/Frontend/res/NotoSansSC-Regular.ttf",
-        // "/Users/kench/Documents/codespace/mine/imgui/Imgui_CodingPlanUsage/assets/fonts/MapleMono-NF-CN-Regular.ttf",
         nullptr
-    };
-    
+    };    
     for (int i = 0; font_paths[i] != nullptr; i++)
     {
         if (std::filesystem::exists(font_paths[i]))
         {
             font = io.Fonts->AddFontFromFileTTF(font_paths[i], 18.0f, &font_config, ranges.Data);
-            if (font)
-            {
-                break;
-            }
+            if (font) break;
         }
     }
-    
-    if (!font)
-    {
-        io.Fonts->AddFontDefault();
-    }
+
+    // font = io.Fonts->AddFontFromMemoryCompressedTTF(noto_sans_sc_compressed_data, noto_sans_sc_compressed_size, 18.0f, &font_config, ranges.Data);
+    // if (!font)
+    // {
+    //     io.Fonts->AddFontDefault();
+    // }
 
     float iconFontSize = size_pixels * 2.0f / 3.0f;
     static const ImWchar icons_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };

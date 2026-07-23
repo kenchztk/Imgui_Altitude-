@@ -76,32 +76,68 @@ void AltitudeDisplay::updateDisplayedAltitude(float targetAlt)
 
 // ---- 主入口 ----
 
+// ---- 主入口：用三个 BeginChild 隔离三段内容，ImGui 自动管理游标流转 ----
+// 界面整体布局：
+//   ┌──────────────────────────┐
+//   │ [模式切换按钮组]            │  <- BeginChild ##mode_switcher (AutoResizeY)
+//   │ [海拔显示区域]              │  <- BeginChild ##alt_display   (弹性填满剩余)
+//   │ [底部控制区]                │  <- BeginChild ##controls      (AutoResizeY)
+//   └──────────────────────────┘
+
 bool AltitudeDisplay::render(const LocationData& data, LocationStatus st,
                              LocationProvider& loc, const ImVec2& displaySize)
 {
-    float winW = displaySize.x;
-    float winH = displaySize.y;
+    (void)displaySize;  // 内部统一用 GetContentRegionAvail，不再依赖 displaySize
     updateDisplayedAltitude(data.valid ? (float)data.altitudeMSL : m_displayedAlt);
 
     bool interacted = false;
-    interacted |= renderModeSwitcher(winW);
 
-    switch (m_mode)
+    // macOS 毛玻璃：子窗口背景透明，继承父窗口半透明效果
+#if defined(__APPLE__)
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
+#endif
+
+    // 第1/3段加 AlwaysUseWindowPadding：按钮不贴边，与原视觉一致
+    const ImGuiChildFlags kFlagsPadded = ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding;
+
+    // ---- 第1段：模式切换按钮组（高度自适应）----
+    ImGui::BeginChild("##mode_switcher", ImVec2(0, 0), kFlagsPadded);
+    interacted |= renderModeSwitcher();
+    ImGui::EndChild();
+
+    // ---- 第2段：海拔显示区（弹性填满剩余空间）----
+    // 需预留第3段高度 h3，第2段高度 = 当前可用高度 - h3
+    float h3 = estimateControlsHeight(data);
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    ImGui::BeginChild("##alt_display", ImVec2(0, ImMax(avail.y - h3, 50.0f)), ImGuiChildFlags_None);
     {
-        case Mode::MinimalCenter: renderMinimalCenter(data, st, winW, winH); break;
-        case Mode::Gauge:         renderGauge(data, st, winW, winH); break;
-        case Mode::HUD:           renderHUD(data, st, winW, winH); break;
-        case Mode::Card:          renderCard(data, st, winW, winH); break;
-        case Mode::CircleGradient: renderCircleGradient(data, st, winW, winH, loc.lastHeading()); break;
+        // 子窗口内获取局部可用尺寸，传给 renderXxx
+        ImVec2 subAvail = ImGui::GetContentRegionAvail();
+        switch (m_mode)
+        {
+            case Mode::MinimalCenter:  renderMinimalCenter(data, st, subAvail.x, subAvail.y); break;
+            case Mode::Gauge:          renderGauge(data, st, subAvail.x, subAvail.y); break;
+            case Mode::HUD:            renderHUD(data, st, subAvail.x, subAvail.y); break;
+            case Mode::Card:           renderCard(data, st, subAvail.x, subAvail.y); break;
+            case Mode::CircleGradient: renderCircleGradient(data, st, subAvail.x, subAvail.y, loc.lastHeading()); break;
+        }
     }
+    ImGui::EndChild();
 
+    // ---- 第3段：底部控制区（高度自适应）----
+    ImGui::BeginChild("##controls", ImVec2(0, 0), kFlagsPadded);
     interacted |= renderControls(data, st, loc);
+    ImGui::EndChild();
+
+#if defined(__APPLE__)
+    ImGui::PopStyleColor();
+#endif
     return interacted;
 }
 
 // ---- 模式切换按钮组 ----
 
-bool AltitudeDisplay::renderModeSwitcher(float winW)
+bool AltitudeDisplay::renderModeSwitcher()
 {
     bool interacted = false;
     const Mode modes[] = { Mode::MinimalCenter, Mode::Gauge, Mode::HUD, Mode::Card, Mode::CircleGradient };
@@ -110,8 +146,8 @@ bool AltitudeDisplay::renderModeSwitcher(float winW)
 
     ImGuiStyle& sty = ImGui::GetStyle();
     float spacing = sty.ItemSpacing.x;
-    float pad = sty.WindowPadding.x;
-    float btnW = (winW - pad * 2.0f - spacing * 4.0f) / 5.0f;
+    float availW = ImGui::GetContentRegionAvail().x;  // 已扣除子窗口 padding
+    float btnW = (availW - spacing * 4.0f) / 5.0f;    // 5 个按钮，4 个间距
 
     ImGui::SetWindowFontScale(1.4f);
     for (int i = 0; i < 5; ++i)
@@ -140,21 +176,23 @@ bool AltitudeDisplay::renderModeSwitcher(float winW)
 // ---- 模式一：极简居中大字 ----
 
 void AltitudeDisplay::renderMinimalCenter(const LocationData& data, LocationStatus st,
-                                          float winW, float winH)
+                                         float availW, float availH)
 {
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 wp = ImGui::GetWindowPos();  // 子窗口 ##alt_display 位置
     float t = (float)ImGui::GetTime();
     float pulse = 0.5f + 0.5f * sinf(t * 2.0f);
 
-    float centerX = winW * 0.5f;
-    float centerY = winH * 0.36f;
+    // centerX/centerY 为相对子窗口的偏移；ImDrawList 需加 wp 转绝对
+    float centerX = availW * 0.5f;
+    float centerY = availH * 0.38f;
 
     // 呼吸光晕（仅有数据时）
     if (data.valid)
     {
-        float glowR = winW * 0.16f + winW * 0.02f * pulse;
+        float glowR = availW * 0.16f + availW * 0.02f * pulse;
         ImU32 glow = IM_COL32(80, 180, 255, (int)(28 + 22 * pulse));
-        dl->AddCircleFilled(ImVec2(centerX, centerY), glowR, glow, 48);
+        dl->AddCircleFilled(ImVec2(wp.x + centerX, wp.y + centerY), glowR, glow, 48);
     }
 
     // 数值
@@ -170,28 +208,29 @@ void AltitudeDisplay::renderMinimalCenter(const LocationData& data, LocationStat
 
     ImGui::SetWindowFontScale(6.0f);
     ImVec2 valSize = ImGui::CalcTextSize(valStr);
-    ImVec2 wp = ImGui::GetWindowPos();
-    ImGui::SetCursorScreenPos(ImVec2(wp.x + (winW - valSize.x) * 0.5f, wp.y + centerY - valSize.y * 0.5f));
+    ImGui::SetCursorScreenPos(ImVec2(wp.x + (availW - valSize.x) * 0.5f, wp.y + centerY - valSize.y * 0.5f));
     ImGui::TextColored(valCol, "%s", valStr);
     ImGui::SetWindowFontScale(1.0f);
 
-    // 单位
-    CenteredText("m (MSL)", 1.5f, ImVec4(0.6f, 0.7f, 0.85f, 1.0f), winW, centerY + valSize.y * 0.5f + 8.0f);
+    // 单位（CenteredText 内部用 GetWindowPos，传 availW 与相对偏移）
+    CenteredText("m (MSL)", 1.5f, ImVec4(0.6f, 0.7f, 0.85f, 1.0f), availW, centerY + valSize.y * 0.5f + 8.0f);
 
-    // 状态徽章
+    // 状态徽章（renderStatusBadge 内部用 GetWindowPos，传相对偏移）
     renderStatusBadge(st, centerX, centerY + valSize.y * 0.5f + 44.0f);
 }
 
 // ---- 模式二：航空仪表盘 ----
 
 void AltitudeDisplay::renderGauge(const LocationData& data, LocationStatus st,
-                                  float winW, float winH)
+                                 float availW, float availH)
 {
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 wp = ImGui::GetWindowPos();  // 子窗口 ##alt_display 位置
     float t = (float)ImGui::GetTime();
 
-    ImVec2 center(winW * 0.5f, winH * 0.40f);
-    float R = ImMin(winW, winH) * 0.30f;
+    // center 为绝对屏幕坐标（wp + 相对偏移），ImDrawList 直接使用
+    ImVec2 center(wp.x + availW * 0.5f, wp.y + availH * 0.44f);
+    float R = ImMin(availW, availH) * 0.40f;
 
     // 270° 扇形：底部开口，从 135°(左下) 经上 到 45°(右下)
     const float a_min = 3.0f * IM_PI / 4.0f;       // 135°
@@ -230,7 +269,7 @@ void AltitudeDisplay::renderGauge(const LocationData& data, LocationStatus st,
     float maxRange = 1000.0f;
     if (m_displayedAlt > 0.0f)
         maxRange = std::ceil(m_displayedAlt / 1000.0f) * 1000.0f + 1000.0f;
-    float labelFontSize = ImMax(11.0f, winH * 0.018f);
+    float labelFontSize = ImMax(11.0f, availH * 0.018f);
     for (int i = 0; i <= 4; ++i)
     {
         float a = a_min + (float)i / 4.0f * (a_max - a_min);
@@ -266,27 +305,27 @@ void AltitudeDisplay::renderGauge(const LocationData& data, LocationStatus st,
         dl->AddCircleFilled(center, 4.0f, IM_COL32(20, 30, 45, 255), 16);
     }
 
-    // 中心数值
+    // 中心数值（center 为绝对，CenteredText/renderStatusBadge 需传相对子窗口偏移：减 wp）
     char valBuf[32];
     const char* valStr = data.valid ? (snprintf(valBuf, sizeof(valBuf), "%.1f", m_displayedAlt), valBuf) : "--";
-    CenteredText(valStr, 4.0f, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), winW, center.y - R * 0.25f);
-    CenteredText("m (MSL)", 1.2f, ImVec4(0.6f, 0.7f, 0.85f, 1.0f), winW, center.y + R * 0.08f);
+    CenteredText(valStr, 5.0f, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), availW, center.y - wp.y - R * 0.25f);
+    CenteredText("m (MSL)", 1.4f, ImVec4(0.6f, 0.7f, 0.85f, 1.0f), availW, center.y - wp.y + R * 0.08f);
 
     // 状态徽章
-    renderStatusBadge(st, winW * 0.5f, center.y + R * 0.30f);
+    renderStatusBadge(st, availW * 0.5f, center.y - wp.y + R * 0.35f);
 }
 
 // ---- 模式三：HUD 刻度尺 ----
 
 void AltitudeDisplay::renderHUD(const LocationData& data, LocationStatus st,
-                                float winW, float winH)
+                                float availW, float availH)
 {
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 wp = ImGui::GetWindowPos();
+    ImVec2 wp = ImGui::GetWindowPos();  // 子窗口 ##alt_display 位置
 
-    float tapeX = wp.x + winW * 0.28f;
-    float y0 = wp.y + winH * 0.22f;
-    float y1 = wp.y + winH * 0.60f;
+    float tapeX = wp.x + availW * 0.35f;
+    float y0 = wp.y + availH * 0.12f;
+    float y1 = wp.y + availH * 0.88f;
     float centerY = (y0 + y1) * 0.5f;
     float tapeH = y1 - y0;
     float ppm = tapeH / 200.0f; // 200m 跨度填满带高
@@ -298,7 +337,7 @@ void AltitudeDisplay::renderHUD(const LocationData& data, LocationStatus st,
     // 刻度线（以 m_displayedAlt 为中心，每 50m 一条）
     int altStart = (int)std::floor(m_displayedAlt / 50.0f) * 50 - 200;
     int altEnd = (int)std::ceil(m_displayedAlt / 50.0f) * 50 + 200;
-    float labelFontSize = ImMax(11.0f, winH * 0.018f);
+    float labelFontSize = ImMax(11.0f, availH * 0.018f);
     for (int alt = altStart; alt <= altEnd; alt += 50)
     {
         float y = centerY - ((float)alt - m_displayedAlt) * ppm;
@@ -328,37 +367,37 @@ void AltitudeDisplay::renderHUD(const LocationData& data, LocationStatus st,
     // 数值（参考线右侧）
     char valBuf[32];
     const char* valStr = data.valid ? (snprintf(valBuf, sizeof(valBuf), "%.1f", m_displayedAlt), valBuf) : "--";
-    ImGui::SetWindowFontScale(4.0f);
+    ImGui::SetWindowFontScale(5.0f);
     ImVec2 vsz = ImGui::CalcTextSize(valStr);
     ImGui::SetCursorScreenPos(ImVec2(tapeX + 60.0f, centerY - vsz.y * 0.5f));
     ImGui::TextColored(ImVec4(0.31f, 1.0f, 0.78f, 1.0f), "%s", valStr);
     ImGui::SetWindowFontScale(1.0f);
 
     // 单位
-    ImGui::SetWindowFontScale(1.3f);
+    ImGui::SetWindowFontScale(1.5f);
     ImVec2 usz = ImGui::CalcTextSize("m (MSL)");
     ImGui::SetCursorScreenPos(ImVec2(tapeX + 60.0f, centerY + vsz.y * 0.5f + 2.0f));
     ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.7f, 1.0f), "m (MSL)");
     ImGui::SetWindowFontScale(1.0f);
     (void)usz;
 
-    // 状态徽章（数值下方）
+    // 状态徽章（数值下方，renderStatusBadge 期望相对子窗口偏移：减 wp）
     ImGui::SetWindowFontScale(1.0f);
-    renderStatusBadge(st, tapeX + 100.0f, centerY + vsz.y * 0.5f + 30.0f);
+    renderStatusBadge(st, tapeX + 100.0f - wp.x, centerY + vsz.y * 0.5f + 30.0f - wp.y);
 }
 
 // ---- 模式四：卡片强调 ----
 
 void AltitudeDisplay::renderCard(const LocationData& data, LocationStatus st,
-                                 float winW, float winH)
+                                 float availW, float availH)
 {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 wp = ImGui::GetWindowPos();
     float t = (float)ImGui::GetTime();
     float pulse = 0.5f + 0.5f * sinf(t * 2.5f);
 
-    ImVec2 p_min(wp.x + winW * 0.10f, wp.y + winH * 0.16f);
-    ImVec2 p_max(wp.x + winW * 0.90f, wp.y + winH * 0.60f);
+    ImVec2 p_min(wp.x + availW * 0.08f, wp.y + availH * 0.06f);
+    ImVec2 p_max(wp.x + availW * 0.92f, wp.y + availH * 0.94f);
     float rounding = 16.0f;
 
     // 渐变背景（左上深青 -> 右下深蓝）
@@ -372,17 +411,17 @@ void AltitudeDisplay::renderCard(const LocationData& data, LocationStatus st,
     ImU32 border = IM_COL32(80, 180, 255, (int)(120 + 80 * pulse));
     dl->AddRect(p_min, p_max, border, rounding, 0, 2.5f);
 
-    // 卡片内标题
-    CenteredText(ICON_FA_MOUNTAIN "  海拔高度", 1.3f, ImVec4(0.7f, 0.8f, 0.95f, 1.0f),
-                 winW, winH * 0.20f);
+    // 卡片内标题（CenteredText 期望相对子窗口偏移，传 availW/availH 比例值）
+    CenteredText(ICON_FA_MOUNTAIN "  海拔高度", 1.5f, ImVec4(0.7f, 0.8f, 0.95f, 1.0f),
+                 availW, availH * 0.14f);
 
     // 卡片内数值
     char valBuf[32];
     const char* valStr = data.valid ? (snprintf(valBuf, sizeof(valBuf), "%.1f", m_displayedAlt), valBuf) : "--";
-    CenteredText(valStr, 5.0f, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), winW, winH * 0.30f);
+    CenteredText(valStr, 6.0f, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), availW, availH * 0.34f);
 
     // 单位
-    CenteredText("m (MSL)", 1.3f, ImVec4(0.6f, 0.75f, 0.9f, 1.0f), winW, winH * 0.44f);
+    CenteredText("m (MSL)", 1.5f, ImVec4(0.6f, 0.75f, 0.9f, 1.0f), availW, availH * 0.54f);
 
     // 状态进度条
     float barX = p_min.x + 20.0f;
@@ -399,8 +438,8 @@ void AltitudeDisplay::renderCard(const LocationData& data, LocationStatus st,
                           statusColor(st), 3.0f);
     }
 
-    // 状态徽章
-    renderStatusBadge(st, winW * 0.5f, barY + 14.0f);
+    // 状态徽章（barY 为绝对，renderStatusBadge 期望相对：减 wp.y）
+    renderStatusBadge(st, availW * 0.5f, barY + 14.0f - wp.y);
 }
 
 // ---- 状态徽章（呼吸圆点 + 文案）----
@@ -450,13 +489,20 @@ void AltitudeDisplay::renderDetailsSection(const LocationData& data)
     ImGui::Separator();
 }
 
-// ---- 控制按钮 ----
+// ---- 底部控制区（详情按钮 + 展开内容 + 开始/停止按钮）----
+// 界面从上到下布局：
+//   ┌─────────────────────┐
+//   │ [详情/收起] 按钮      │  <- 第1行：切换次要信息展开
+//   │  经度/纬度/精度...    │  <- 第2段：展开时显示（可选）
+//   │ [开始测量/停止] 按钮  │  <- 第3行：控制定位
+//   └─────────────────────┘
 
 bool AltitudeDisplay::renderControls(const LocationData& data, LocationStatus st, LocationProvider& loc)
 {
     bool interacted = false;
     ImGui::Spacing();
 
+    // 第1行：详情展开/收起按钮
     const char* detIcon = m_showDetails ? (ICON_FA_CHEVRON_UP "  收起") : (ICON_FA_CHEVRON_DOWN "  详情");
     if (ImGui::Button(detIcon, ImVec2(-1, 0)))
     {
@@ -464,9 +510,11 @@ bool AltitudeDisplay::renderControls(const LocationData& data, LocationStatus st
         interacted = true;
     }
 
+    // 第2段：展开时显示次要信息（经纬度/椭球高/精度）
     if (m_showDetails)
         renderDetailsSection(data);
 
+    // 第3行：开始测量 / 停止 按钮
     ImGui::Spacing();
     bool running = (st == LocationStatus::Active || st == LocationStatus::Starting);
     if (running)
@@ -493,14 +541,14 @@ bool AltitudeDisplay::renderControls(const LocationData& data, LocationStatus st
 // ---- 模式五：渐变同心圆（复刻 Xnip 图片设计）----
 
 void AltitudeDisplay::renderCircleGradient(const LocationData& data, LocationStatus st,
-                                            float winW, float winH, double heading)
+                                           float availW, float availH, double heading)
 {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 wp = ImGui::GetWindowPos();
 
-    // 大圆中心
-    ImVec2 center(wp.x + winW * 0.5f, wp.y + winH * 0.45f);
-    float minDim = ImMin(winW, winH);
+    // 大圆中心（绝对屏幕坐标）
+    ImVec2 center(wp.x + availW * 0.5f, wp.y + availH * 0.48f);
+    float minDim = ImMin(availW, availH);
 
     // 三层圆环半径
     float R1 = minDim * 0.42f;     // 最外层淡蓝绿
@@ -519,15 +567,19 @@ void AltitudeDisplay::renderCircleGradient(const LocationData& data, LocationSta
         float a1 = (float)(i+1) / segments * 2.0f * IM_PI;
         float y0 = center.y + R3 * sinf(a0);
         float y1 = center.y + R3 * sinf(a1);
-        float t0 = (y0 - (wp.y + R3)) / (2.0f * R3); // 0 = top, 1 = bottom
-        float t1 = (y1 - (wp.y + R3)) / (2.0f * R3);
+        float t0 = (y0 - (center.y - R3)) / (2.0f * R3); // 0 = top, 1 = bottom
+        float t1 = (y1 - (center.y - R3)) / (2.0f * R3);
         ImU32 c0 = IM_COL32(255, 40, 40, (int)(220 - 100 * t0));
         ImU32 c1 = IM_COL32(255, 120, 40, (int)(220 - 100 * t1));
-        // 绘制三角形扇形段
+        // 绘制三角形扇形段，计算平均颜色
         dl->PathArcTo(center, R3, a0, a1);
         dl->PathLineTo(center);
-        ImU32 colors[3] = {c0, c1, IM_COL32(0,0,0,0)};
-        dl->PathFillConvex( (c0 + c1)/2 );
+        uint8_t r = (uint8_t)((( (c0 >> 24) & 0xFF ) + ( (c1 >> 24) & 0xFF )) / 2);
+        uint8_t g = (uint8_t)((( (c0 >> 16) & 0xFF ) + ( (c1 >> 16) & 0xFF )) / 2);
+        uint8_t b = (uint8_t)((( (c0 >> 8) & 0xFF ) + ( (c1 >> 8) & 0xFF )) / 2);
+        uint8_t a = (uint8_t)((( c0 & 0xFF ) + ( c1 & 0xFF )) / 2);
+        ImU32 avgColor = ( (ImU32)r << 24 ) | ( (ImU32)g << 16 ) | ( (ImU32)b << 8 ) | (ImU32)a;
+        dl->PathFillConvex(avgColor);
     }
 
     // N/S 方向箭头（按 heading 旋转）
@@ -581,22 +633,47 @@ void AltitudeDisplay::renderCircleGradient(const LocationData& data, LocationSta
     char infoBuf[64];
     snprintf(infoBuf, sizeof(infoBuf), "-- mmHg    海拔精度: %.0f米", data.valid ? data.horizontalAccuracy : 0.0);
     ImGui::SetCursorScreenPos(ImVec2(wp.x, infoY));
-    CenteredText(infoBuf, 1.1f, ImVec4(1.0f, 1.0f, 1.0f, 0.85f), winW, infoY);
+    // CenteredText 期望相对子窗口偏移，infoY 为绝对需减 wp.y
+    CenteredText(infoBuf, 1.1f, ImVec4(1.0f, 1.0f, 1.0f, 0.85f), availW, infoY - wp.y);
 
     // 中心文字：当前海拔
     float titleY = center.y - R3 * 0.48f;
-    CenteredText("当前海拔", 1.5f, ImVec4(1.0f, 1.0f, 1.0f, 0.8f), winW, titleY);
+    CenteredText("当前海拔", 1.5f, ImVec4(1.0f, 1.0f, 1.0f, 0.8f), availW, titleY - wp.y);
 
     // 大字海拔数值 + 米
     char valBuf[32];
     const char* valStr = data.valid ? (snprintf(valBuf, sizeof(valBuf), "%.0f", m_displayedAlt), valBuf) : "--";
     float valY = center.y - R3 * 0.10f;
-    CenteredText(valStr, 5.5f, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), winW, valY);
+    CenteredText(valStr, 5.5f, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), availW, valY - wp.y);
 
-    float meterW = ImGui::CalcTextSize("米").x;
     float meterY = valY + 5.5f * 18.0f * 0.5f + 4.0f;
-    CenteredText("米", 2.5f, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), winW, meterY);
+    CenteredText("米", 2.5f, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), availW, meterY - wp.y);
 
-    // 状态徽章（大圆环下方）
-    renderStatusBadge(st, winW * 0.5f, center.y + R1 + 24.0f);
+    // 状态徽章（大圆环下方，renderStatusBadge 期望相对：减 wp.y）
+    renderStatusBadge(st, availW * 0.5f, center.y + R1 + 24.0f - wp.y);
+}
+
+// ---- 预估第3段（控制区）高度，供 render() 计算第2段弹性高度 ----
+
+float AltitudeDisplay::estimateControlsHeight(const LocationData& data) const
+{
+    (void)data;
+    ImGuiStyle& sty = ImGui::GetStyle();
+    float btnH = ImGui::GetFrameHeight();
+    float sp   = sty.ItemSpacing.y;
+    // 第3段用 AlwaysUseWindowPadding，子窗口上下各加 WindowPadding.y，需计入预估
+    float padY = sty.WindowPadding.y;
+    // renderControls 布局：Spacing + 详情按钮 + (可选详情) + Spacing + 开始/停止按钮
+    float h = sp + btnH + sp + btnH;
+    if (m_showDetails)
+    {
+        float lineH = ImGui::GetTextLineHeightWithSpacing();
+        int lines = 3;                              // macOS: 经度/纬度/水平精度
+#ifdef __ANDROID__
+        lines = 5;                                  // Android 多椭球高 + geoid 修正
+#endif
+        // renderDetailsSection: Separator + N 行 Text + Separator（Separator 约占 spacing+1px）
+        h += lineH * lines + (sp + 1.0f) * 2.0f + sp;
+    }
+    return h + padY * 2.0f;  // 加上子窗口上下 padding
 }

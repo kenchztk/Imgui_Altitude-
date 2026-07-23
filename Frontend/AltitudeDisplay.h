@@ -39,16 +39,19 @@ private:
     // 数字平滑插值
     void updateDisplayedAltitude(float targetAlt);
 
-    // 4 种模式渲染
-    void renderMinimalCenter(const LocationData& data, LocationStatus st, float winW, float winH);
-    void renderGauge(const LocationData& data, LocationStatus st, float winW, float winH);
-    void renderHUD(const LocationData& data, LocationStatus st, float winW, float winH);
-    void renderCard(const LocationData& data, LocationStatus st, float winW, float winH);
-    void renderCircleGradient(const LocationData& data, LocationStatus st, float winW, float winH, double heading);
+    // 5 种模式渲染（在 BeginChild 内绘制，坐标基于子窗口可用区域）
+    void renderMinimalCenter(const LocationData& data, LocationStatus st, float availW, float availH);
+    void renderGauge(const LocationData& data, LocationStatus st, float availW, float availH);
+    void renderHUD(const LocationData& data, LocationStatus st, float availW, float availH);
+    void renderCard(const LocationData& data, LocationStatus st, float availW, float availH);
+    void renderCircleGradient(const LocationData& data, LocationStatus st, float availW, float availH, double heading);
 
     // 公用子绘制
     void renderStatusBadge(LocationStatus st, float centerX, float posY);   // 状态徽章（带旋转/脉冲）
     void renderDetailsSection(const LocationData& data);                     // 展开的次要信息
-    bool renderModeSwitcher(float winW);                                     // 顶部模式切换按钮组
+    bool renderModeSwitcher();                                              // 顶部模式切换按钮组
     bool renderControls(const LocationData& data, LocationStatus st, LocationProvider& loc);           // 开始/停止按钮
+
+    // 预估第3段（控制区）高度，供 render() 计算第2段弹性高度
+    float estimateControlsHeight(const LocationData& data) const;
 };

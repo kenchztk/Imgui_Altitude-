@@ -94,9 +94,9 @@ void Frontend::initFonts(float size_pixels)
     
     static ImVector<ImWchar> ranges;
     ImFontGlyphRangesBuilder builder;
-    builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
+    // builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
     builder.AddRanges(io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
-    builder.AddRanges(io.Fonts->GetGlyphRangesChineseFull());
+    // builder.AddRanges(io.Fonts->GetGlyphRangesChineseFull());
     // builder.AddRanges(io.Fonts->GetGlyphRangesJapanese());
     // builder.AddRanges(io.Fonts->GetGlyphRangesKorean());
     builder.AddText("你好世界开始设置帮助选择主题");

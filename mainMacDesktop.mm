@@ -90,7 +90,7 @@
 
 -(void)loadView
 {
-    NSRect frame = NSMakeRect(0, 0, 500, 300);
+    NSRect frame = NSMakeRect(0, 0, 500, 500);
     // 底层:behind-window 毛玻璃,模糊窗口后方内容
     NSVisualEffectView *vfx = [[[NSVisualEffectView alloc] initWithFrame:frame] autorelease];
     vfx.blendingMode = NSVisualEffectBlendingModeBehindWindow;  // 模糊窗口后方

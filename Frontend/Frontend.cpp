@@ -9,6 +9,31 @@
 #include "Backend/Backend.h"
 #include "StyleManager.h"
 #include <spdlog/spdlog.h>
+#include <filesystem>
+#include <string>
+
+#if defined(__ANDROID__)
+// mainAndroid.cpp 提供：从 APK assets 读取资源到内存（IM_ALLOC 分配，ImGui 接管释放）
+extern int AndroidGetAssetData(const char* filename, void** outData);
+#elif defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+// 解析 .app bundle Resources 下资源的绝对路径；裸二进制运行（无 bundle）时返回空
+static std::string MacBundleResourcePath(const char* relative)
+{
+    CFBundleRef bundle = CFBundleGetMainBundle();
+    if (!bundle)
+        return {};
+    CFURLRef url = CFBundleCopyResourcesDirectoryURL(bundle);
+    if (!url)
+        return {};
+    std::string result;
+    char buf[1024];
+    if (CFURLGetFileSystemRepresentation(url, true, reinterpret_cast<UInt8*>(buf), sizeof(buf)))
+        result = std::string(buf) + "/" + relative;
+    CFRelease(url);
+    return result;
+}
+#endif
 
 Frontend &Frontend::Instance()
 {
@@ -103,25 +128,45 @@ void Frontend::initFonts(float size_pixels)
     builder.BuildRanges(&ranges);
     
     ImFont* font = nullptr;
-    
-    const char* font_paths[] = {
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        nullptr
-    };    
-    for (int i = 0; font_paths[i] != nullptr; i++)
-    {
-        if (std::filesystem::exists(font_paths[i]))
-        {
-            font = io.Fonts->AddFontFromFileTTF(font_paths[i], 18.0f, &font_config, ranges.Data);
-            if (font) break;
-        }
-    }
 
-    // font = io.Fonts->AddFontFromMemoryCompressedTTF(noto_sans_sc_compressed_data, noto_sans_sc_compressed_size, 18.0f, &font_config, ranges.Data);
-    // if (!font)
-    // {
-    //     io.Fonts->AddFontDefault();
-    // }
+    // -- 主字体：随应用分发的 MapleMono，按平台从不同位置加载 --
+    static const char* kFontRelPath = "fonts/MapleMono-NF-CN-Regular.ttf";
+#if defined(__ANDROID__)
+    // Android：字体打包在 APK assets/fonts/ 内，经 AAssetManager 读入内存加载
+    void* font_data = nullptr;
+    int font_data_size = AndroidGetAssetData(kFontRelPath, &font_data);
+    if (font_data_size > 0)
+        font = io.Fonts->AddFontFromMemoryTTF(font_data, font_data_size, size_pixels, &font_config, ranges.Data);
+    if (!font)
+        spdlog::error("[Font] 加载 assets/{} 失败", kFontRelPath);
+#elif defined(__APPLE__)
+    // macOS：字体位于 .app/Contents/Resources/fonts/；裸二进制运行时回退到源码目录
+    std::string font_path = MacBundleResourcePath(kFontRelPath);
+    if (font_path.empty() || !std::filesystem::exists(font_path))
+        font_path = std::string("assets/") + kFontRelPath;
+    if (std::filesystem::exists(font_path))
+        font = io.Fonts->AddFontFromFileTTF(font_path.c_str(), size_pixels, &font_config, ranges.Data);
+    if (!font)
+        spdlog::error("[Font] 加载 {} 失败", font_path);
+#elif defined(_WIN32)
+    // Windows：字体随构建拷贝到可执行文件旁的 fonts/ 目录
+    if (std::filesystem::exists(kFontRelPath))
+        font = io.Fonts->AddFontFromFileTTF(kFontRelPath, size_pixels, &font_config, ranges.Data);
+    if (!font)
+        spdlog::error("[Font] 加载 {} 失败", kFontRelPath);
+#endif
+
+#if defined(__APPLE__)
+    // 回退：macOS 系统中文字体
+    if (!font)
+    {
+        const char* sys_font = "/System/Library/Fonts/STHeiti Light.ttc";
+        if (std::filesystem::exists(sys_font))
+            font = io.Fonts->AddFontFromFileTTF(sys_font, size_pixels, &font_config, ranges.Data);
+    }
+#endif
+    if (!font)
+        io.Fonts->AddFontDefault();
 
     float iconFontSize = size_pixels * 2.0f / 3.0f;
     static const ImWchar icons_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };

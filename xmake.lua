@@ -74,7 +74,7 @@ target("NativeApp")
         end
         add_cxflags("-Wall", "-Wextra")
         add_mxflags("-fno-objc-arc")
-        add_frameworks("AppKit", "Metal", "MetalKit", "QuartzCore", "GameController", "CoreLocation", "CoreMotion")
+        add_frameworks("AppKit", "Metal", "MetalKit", "QuartzCore", "GameController", "CoreLocation", "CoreMotion", "CoreFoundation")
     elseif is_plat("android") then
         set_kind("shared")
         set_arch("arm64-v8a")
@@ -100,13 +100,21 @@ target("NativeApp")
         import("core.base.task")
         task.run("project", {kind = "compile_commands", outputdir = ".vscode"})
 
+        local font_src = "assets/fonts/MapleMono-NF-CN-Regular.ttf"
+
         if target:is_plat("windows") then
             -- Windows：运行时依赖 WebView2Loader.dll，构建后拷贝到可执行文件输出目录
             local dest = path.directory(target:targetfile())
             os.cp("ThirdParty/WebView2/bin/x64/WebView2Loader.dll", dest)
             print("[WebView2] copied WebView2Loader.dll -> " .. dest)
-       
+            -- 字体分发：拷贝到可执行文件旁 fonts/，运行时以相对路径加载
+            local font_dir = path.join(dest, "fonts")
+            os.mkdir(font_dir)
+            os.cp(font_src, font_dir)
+            print("✅ 已拷贝字体: " .. path.join(font_dir, path.filename(font_src)))
+
         elseif is_plat("android") then
+            -- xmake f -p android -a arm64-v8a --ndk=/System/Volumes/Data/Users/kench/Library/Android/sdk/ndk/27.0.12077973 --ndk_sdkver=27
             local libname = path.filename(target:targetfile())
             local dest = path.join("android/app/libs/arm64-v8a", libname)
             os.cp(target:targetfile(), dest)
@@ -121,7 +129,12 @@ target("NativeApp")
             else
                 print("⚠️ 未找到 " .. geoid_src .. "，跳过 EGM96 数据拷贝")
             end
-        
+            -- 字体分发：拷贝到 APK assets/fonts/，运行时经 AAssetManager 读取
+            local font_dest_dir = "android/app/src/main/assets/fonts"
+            os.mkdir(font_dest_dir)
+            os.cp(font_src, font_dest_dir)
+            print("✅ 已拷贝字体: " .. path.join(font_dest_dir, path.filename(font_src)))
+            
         elseif is_plat("macosx") then
             local pkg_dir = "pkg"
             local app_name = target:name() .. ".app"
@@ -138,6 +151,11 @@ target("NativeApp")
             os.cp(target:targetfile(), path.join(macos_dir, target:name()))
             -- 复制 Info.plist
             os.cp("assets/app/Info.plist", path.join(contents_dir, "Info.plist"))
+            -- 字体分发：拷贝到 Resources/fonts/（须在 codesign 之前，随 bundle 一并签名）
+            local font_dest_dir = path.join(resources_dir, "fonts")
+            os.mkdir(font_dest_dir)
+            os.cp(font_src, font_dest_dir)
+            print("✅ 已拷贝字体: " .. path.join(font_dest_dir, path.filename(font_src)))
             -- 设置可执行权限
             os.exec("chmod 755 " .. path.join(macos_dir, target:name()))
             -- 对整个 .app bundle 重新签名（ad-hoc）：

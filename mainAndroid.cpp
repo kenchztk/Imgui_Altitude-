@@ -39,6 +39,14 @@ static int GetAssetData(const char* filename, void** out_data);
 // 由 LocationProviderAndroid.cpp 提供：注册定位 native 方法到 MainActivity
 bool RegisterLocationNatives(struct android_app* app);
 
+// 供 Frontend 等模块从 APK assets 读取资源（如字体）；须在 Init() 设置 g_App 后调用
+int AndroidGetAssetData(const char* filename, void** outData)
+{
+    if (!g_App || !g_App->activity)
+        return 0;
+    return GetAssetData(filename, outData);
+}
+
 // Main code
 static void handleAppCmd(struct android_app* app, int32_t appCmd)
 {

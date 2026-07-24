@@ -62,7 +62,15 @@ class MainActivity : NativeActivity() {
     }
 
     fun requestLocationPermission() {
-        requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), LOCATION_REQ)
+        // JNI 从 native 线程调入，权限请求须切到 UI 线程执行
+        runOnUiThread {
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                // 已授权则直接回调，避免重复弹窗
+                nativeOnPermissionResult(true)
+            } else {
+                requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), LOCATION_REQ)
+            }
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -74,17 +82,23 @@ class MainActivity : NativeActivity() {
     }
 
     fun startLocationUpdates() {
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
-            return
-        val lm = locationManager
-            ?: (getSystemService(Context.LOCATION_SERVICE) as LocationManager).also { locationManager = it }
-        try {
-            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, locationListener)
-        } catch (e: SecurityException) {
+        // JNI 从 native 线程调入；requestLocationUpdates 的回调需要 Looper，
+        // 切到 UI 线程注册并显式指定 mainLooper，避免 "Can't create handler" 崩溃
+        runOnUiThread {
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
+                return@runOnUiThread
+            val lm = locationManager
+                ?: (getSystemService(Context.LOCATION_SERVICE) as LocationManager).also { locationManager = it }
+            try {
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, locationListener, mainLooper)
+            } catch (e: SecurityException) {
+            }
         }
     }
 
     fun stopLocationUpdates() {
-        locationManager?.removeUpdates(locationListener)
+        runOnUiThread {
+            locationManager?.removeUpdates(locationListener)
+        }
     }
 }

@@ -133,11 +133,15 @@ void LocationProviderAndroid::callKotlinVoid(const char* methodName)
     }
     JavaVM* vm = app->activity->vm;
     JNIEnv* env = nullptr;
-    if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK)
+    // native 线程默认未附加 JVM，GetEnv 返回 JNI_EDETACHED 属正常情况，
+    // 此时需 AttachCurrentThread；只有 JNI_ERR（版本不支持等）才是真失败
+    jint ret = vm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (ret == JNI_ERR)
     {
         spdlog::error("[Location] callKotlinVoid({}) GetEnv 失败", methodName);
         return;
     }
+    bool needDetach = (ret == JNI_EDETACHED);
     if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK)
     {
         spdlog::error("[Location] callKotlinVoid({}) AttachCurrentThread 失败", methodName);
@@ -158,7 +162,8 @@ void LocationProviderAndroid::callKotlinVoid(const char* methodName)
         LOGE("Kotlin method %s not found", methodName);
     }
     env->DeleteLocalRef(clazz);
-    vm->DetachCurrentThread();
+    if (needDetach)
+        vm->DetachCurrentThread();
 }
 
 void LocationProviderAndroid::startUpdates(LocationCallback cb)
@@ -274,8 +279,11 @@ bool RegisterLocationNatives(android_app* app)
         return false;
     JavaVM* vm = app->activity->vm;
     JNIEnv* env = nullptr;
-    if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK)
+    // 同 callKotlinVoid：JNI_EDETACHED 表示线程未附加，继续 Attach 即可
+    jint ret = vm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (ret == JNI_ERR)
         return false;
+    bool needDetach = (ret == JNI_EDETACHED);
     if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK)
         return false;
 
@@ -292,7 +300,8 @@ bool RegisterLocationNatives(android_app* app)
     else
         LOGI("Location natives registered to MainActivity");
     env->DeleteLocalRef(clazz);
-    vm->DetachCurrentThread();
+    if (needDetach)
+        vm->DetachCurrentThread();
     return res == 0;
 }
 

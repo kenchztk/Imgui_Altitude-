@@ -28,6 +28,42 @@ add_requires("fmt 12.2.0", { alias = "fmt", system = false, configs = {header_on
 add_requires("nlohmann_json v3.12.0", { alias = "nlohmann_json", system = false})
 add_requires("geographiclib 2.1.1",   { alias = "geographiclib", system = false, configs = {shared = false}})
 
+-- ============================================================================
+-- imgui 动态库（先 macOS 跑通，后续扩展 Android / Windows）
+-- 把 Dear ImGui 核心 + 平台渲染后端编成共享库 libimgui.{dylib,so,dll}，
+-- 宿主(NativeApp)通过 add_deps 链接，运行时随平台包分发。
+-- macOS 用 @loader_path 作为 install_name，dylib 与可执行文件同目录即可解析。
+-- ============================================================================
+if is_plat("macosx", "android") then
+    target("imgui")
+        set_kind("shared")
+        add_includedirs("ThirdParty/imgui", "ThirdParty/imgui/backends")
+        -- ImGui 核心（所有 *.cpp，不含 backends 子目录）
+        add_files("ThirdParty/imgui/*.cpp")
+        if is_plat("macosx") then
+            -- macOS 后端：OSX(Cocoa) + Metal
+            for _,f in ipairs({"osx", "metal"}) do
+                add_files("ThirdParty/imgui/backends/imgui_impl_" .. f .. ".mm")
+            end
+            add_defines('IMGUI_API=__attribute__((visibility("default")))')
+            add_cxflags("-Wall", "-Wextra")
+            add_mxflags("-fno-objc-arc")
+            add_frameworks("AppKit", "Metal", "MetalKit", "QuartzCore", "GameController", "Foundation")
+            add_ldflags("-install_name @loader_path/libimgui.dylib")
+        else -- android
+            -- Android 后端：Android(NativeActivity) + OpenGL ES3
+            for _,f in ipairs({"android", "opengl3"}) do
+                add_files("ThirdParty/imgui/backends/imgui_impl_" .. f .. ".cpp")
+            end
+            -- 全局 -fvisibility=hidden 下必须用 default 可见性暴露 IMGUI_API
+            add_defines('IMGUI_API=__attribute__((visibility("default")))')
+            add_defines("IMGUI_IMPL_OPENGL_ES3")
+            add_syslinks("GLESv3", "EGL", "android", "log")
+            set_arch("arm64-v8a")
+        end
+    target_end()
+end
+
 target("NativeApp")
     if not is_plat("android") then
         set_kind("binary")
@@ -41,12 +77,19 @@ target("NativeApp")
     -- 3rds
     add_includedirs(".", "ThirdParty")
     -- imgui
-    add_files("ThirdParty/imgui/*.cpp", "*.cc")
-    for _,f in ipairs({"imgui.cpp", "imgui_demo.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp"}) do
-        add_files("ThirdParty/imgui/" .. f)
+    -- macOS 走共享库 libimgui（见上方独立 target）；其余平台直接编进 NativeApp
+    add_files("*.cc")
+    if not is_plat("macosx", "android") then
+        add_files("ThirdParty/imgui/*.cpp")
+        for _,f in ipairs({"imgui.cpp", "imgui_demo.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp"}) do
+            add_files("ThirdParty/imgui/" .. f)
+        end
     end
-    add_files("ThirdParty/imgui/*.cpp", "Frontend/*.cpp|WebViewPanel.cpp", "Backend/*.cpp")
+    add_files("Frontend/*.cpp|WebViewPanel.cpp", "Backend/*.cpp")
     add_includedirs("ThirdParty/imgui", "ThirdParty/imgui/backends")
+    if is_plat("macosx", "android") then
+        add_deps("imgui")
+    end
     -- IconFontCppHeaders
     add_includedirs("ThirdParty/IconFontCppHeaders")
     -- spdlog
@@ -69,9 +112,6 @@ target("NativeApp")
     elseif is_plat("macosx") then
         add_files("*.mm")
         add_files("Backend/*.mm")
-        for _,f in ipairs({"osx", "metal"}) do
-            add_files("ThirdParty/imgui/backends/imgui_impl_" .. f .. ".mm")
-        end
         add_cxflags("-Wall", "-Wextra")
         add_mxflags("-fno-objc-arc")
         add_frameworks("AppKit", "Metal", "MetalKit", "QuartzCore", "GameController", "CoreLocation", "CoreMotion", "CoreFoundation")
@@ -79,15 +119,10 @@ target("NativeApp")
         set_kind("shared")
         set_arch("arm64-v8a")
         add_defines("__ANDROID__")
-        for _,f in ipairs({"android", "opengl3"}) do
-            add_files("ThirdParty/imgui/backends/imgui_impl_" .. f .. ".cpp")
-        end
+        -- ImGui 后端(imgui_impl_android/opengl3)已编入共享库 libimgui.so，此处不再编译
         add_includedirs("$(ndk)/sources/android/native_app_glue")
         add_files("$(ndk)/sources/android/native_app_glue/android_native_app_glue.c");
         add_files("mainAndroid.cpp")
-        -- JNI 头文件路径
-        -- /System/Volumes/Data/Users/kench/Library/Android/sdk/ndk/27.0.12077973/sources/android/native_app_glue/android_native_app_glue.c
-        -- add_includedirs("$(ndk)/27.0.12077973/sources/android/native_app_glue")
         add_defines("IMGUI_IMPL_OPENGL_ES3")
         add_ldflags("-u ANativeActivity_onCreate")
         add_ldflags("-Wl,--no-undefined", "-Wl,--exclude-libs,ALL", "-Wl,-Bsymbolic")
@@ -119,6 +154,23 @@ target("NativeApp")
             local dest = path.join("android/app/libs/arm64-v8a", libname)
             os.cp(target:targetfile(), dest)
             print("✅ 已拷贝到 Android 项目: " .. dest)
+            -- 拷贝 libimgui.so 到同一 jniLibs 目录：由 libNativeApp.so 的 DT_NEEDED 依赖，
+            -- 安装后由 Android 动态链接器自动先于 NativeApp 加载，无需在 Java 侧显式 loadLibrary
+            local imgui_so = path.join(path.directory(target:targetfile()), "libimgui.so")
+            if os.isfile(imgui_so) then
+                os.cp(imgui_so, path.join("android/app/libs/arm64-v8a", "libimgui.so"))
+                print("✅ 已拷贝 libimgui.so -> android/app/libs/arm64-v8a")
+            else
+                print("⚠️ 未找到 " .. imgui_so .. "，跳过 libimgui.so 拷贝")
+            end
+            -- 拷贝 c++_shared 运行时（NDK 自带），APK 安装后 NativeApp/libimgui 均依赖它
+            local cxx_so = "$(ndk)/toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+            if os.isfile(cxx_so) then
+                os.cp(cxx_so, path.join("android/app/libs/arm64-v8a", "libc++_shared.so"))
+                print("✅ 已拷贝 libc++_shared.so -> android/app/libs/arm64-v8a")
+            else
+                print("⚠️ 未找到 libc++_shared.so（" .. cxx_so .. "），请手动补入 jniLibs")
+            end
             -- 拷贝 EGM96 geoid 数据到 assets，供运行时 AAssetManager 读取
             local geoid_src = "assets/geoid/egm96-5.pgm"
             if os.isfile(geoid_src) then
@@ -158,6 +210,14 @@ target("NativeApp")
             print("✅ 已拷贝字体: " .. path.join(font_dest_dir, path.filename(font_src)))
             -- 设置可执行权限
             os.exec("chmod 755 " .. path.join(macos_dir, target:name()))
+            -- 拷贝 libimgui.dylib 到 MacOS 目录（install_name 用 @loader_path，与可执行文件同目录即可解析）
+            local imgui_lib = path.join(path.directory(target:targetfile()), "libimgui.dylib")
+            if os.isfile(imgui_lib) then
+                os.cp(imgui_lib, macos_dir)
+                print("✅ 已拷贝 libimgui.dylib -> " .. macos_dir)
+            else
+                print("⚠️ 未找到 " .. imgui_lib .. "，跳过 libimgui.dylib 拷贝")
+            end
             -- 对整个 .app bundle 重新签名（ad-hoc）：
             -- 链接器自带的 ad-hoc 签名不会绑定 Info.plist，导致 CoreLocation 等依赖
             -- usage description 的隐私 API 静默失效（授权弹窗不弹）。重新签名让

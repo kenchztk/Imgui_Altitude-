@@ -78,7 +78,6 @@ target("NativeApp")
     add_includedirs(".", "ThirdParty")
     -- imgui
     -- macOS 走共享库 libimgui（见上方独立 target）；其余平台直接编进 NativeApp
-    add_files("*.cc")
     if not is_plat("macosx", "android") then
         add_files("ThirdParty/imgui/*.cpp")
         for _,f in ipairs({"imgui.cpp", "imgui_demo.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp"}) do
@@ -99,7 +98,7 @@ target("NativeApp")
 
     if is_plat("windows") then
         add_defines("WIN32", "_WIN32")
-        -- add_files("mainWinDesktop.cpp")
+        -- add_files("platform/win/Main.cpp")
         -- for _,f in ipairs({"win32", "dx11"}) do
         --     add_files("ThirdParty/imgui/backends/imgui_impl_" .. f .. ".cpp")
         -- end
@@ -110,7 +109,7 @@ target("NativeApp")
         -- add_linkdirs("ThirdParty/WebView2/lib/x64")
         -- add_links("WebView2Loader.dll")
     elseif is_plat("macosx") then
-        add_files("*.mm")
+        add_files("platform/mac/Main.mm")
         add_files("Backend/*.mm")
         add_cxflags("-Wall", "-Wextra")
         add_mxflags("-fno-objc-arc")
@@ -122,7 +121,7 @@ target("NativeApp")
         -- ImGui 后端(imgui_impl_android/opengl3)已编入共享库 libimgui.so，此处不再编译
         add_includedirs("$(ndk)/sources/android/native_app_glue")
         add_files("$(ndk)/sources/android/native_app_glue/android_native_app_glue.c");
-        add_files("mainAndroid.cpp")
+        add_files("platform/android/Main.cpp")
         add_defines("IMGUI_IMPL_OPENGL_ES3")
         add_ldflags("-u ANativeActivity_onCreate")
         add_ldflags("-Wl,--no-undefined", "-Wl,--exclude-libs,ALL", "-Wl,-Bsymbolic")

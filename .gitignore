@@ -6,3 +6,5 @@
 !.vscode/launch.json
 build
 pkg
+# ImGui 运行时窗口状态文件，每次运行都会变，不进版本库
+imgui.ini

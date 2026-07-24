@@ -1,5 +1,5 @@
 #ifdef _WIN32
-#  include "mainWinDesktop.h"
+#  include "platform/win/Main.h"
 #endif
 #include "../assets/fonts/fa_solid_900.cpp"
 #include "imgui/imgui_internal.h"
@@ -7,10 +7,12 @@
 #include "IconsFontAwesome6.h"
 #include "Frontend/Frontend.h"
 #include "Backend/Backend.h"
-#include "StyleManager.h"
+#include "Frontend/StyleManager.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <string>
+#include <cmath>
+#include <cmath>
 
 #if defined(__ANDROID__)
 // mainAndroid.cpp 提供：从 APK assets 读取资源到内存（IM_ALLOC 分配，ImGui 接管释放）
@@ -66,17 +68,54 @@ int Frontend::init(float vFontSize, float vGlobalScale)
 void Frontend::update()
 {
     ImGuiIO& io = ImGui::GetIO();
-    // Android 安全区（圆角/挖孔）内边距，用于收敛主窗口，避免控件被裁切到屏幕外
+
+    // 相框尺寸常量（仅 Android 生效；其余平台为 0，保持原铺满行为）
 #ifdef __ANDROID__
-    float sTop = 0.0f, sRight = 0.0f, sBottom = 0.0f, sLeft = 0.0f;
-    AndroidGetSafeInsets(sTop, sRight, sBottom, sLeft);
-    // 个别厂商 ROM 会把圆角/挖孔安全区报得过大（曲率半径可达数百 px），导致内容区被过度内缩。
-    // 这里把每边安全区限制在屏幕对应维度的 8% 以内：正常圆角屏（占比 4~7%）不触发，异常大值被压回合理范围。
-    const float kMaxInsetFrac = 0.08f;
-    if (sTop    > io.DisplaySize.y * kMaxInsetFrac) sTop    = io.DisplaySize.y * kMaxInsetFrac;
-    if (sBottom > io.DisplaySize.y * kMaxInsetFrac) sBottom = io.DisplaySize.y * kMaxInsetFrac;
-    if (sLeft   > io.DisplaySize.x * kMaxInsetFrac) sLeft   = io.DisplaySize.x * kMaxInsetFrac;
-    if (sRight  > io.DisplaySize.x * kMaxInsetFrac) sRight  = io.DisplaySize.x * kMaxInsetFrac;
+    const float kFrameEdge = 10.0f;       // 相框边缘厚度（绘制在窗口边框上）
+    const float kFrameRounding = 26.0f;   // 相框圆角半径
+#else
+    const float kFrameEdge = 0.0f;
+    const float kFrameRounding = 0.0f;
+#endif
+
+    // Android 安全区：改用固定、克制的安全边距，避免依赖 ROM 圆角半径（常被报得过大）
+#ifdef __ANDROID__
+    // 固定四边内边距：把主体收进“安全矩形”，并叠加【相框 + 景深】视觉
+    float margin = ImMin(io.DisplaySize.x, io.DisplaySize.y) * 0.045f;
+    margin = ImClamp(margin, 28.0f, 64.0f);
+    ImVec2 frameMin(margin, margin);
+    ImVec2 frameMax(io.DisplaySize.x - margin, io.DisplaySize.y - margin);
+
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    // 1) 墙面：上深蓝灰 -> 下近黑的纵向渐变（相框背后的“墙”）
+    bg->AddRectFilledMultiColor(ImVec2(0.0f, 0.0f), io.DisplaySize,
+        IM_COL32(20, 26, 36, 255), IM_COL32(20, 26, 36, 255),
+        IM_COL32(7, 9, 13, 255),   IM_COL32(7, 9, 13, 255));
+    // 2) 暗角 vignette：边缘压暗、中心保留，强化景深（随时间轻微漂移，产生视差）
+    {
+        float t = (float)ImGui::GetTime();
+        float cx = io.DisplaySize.x * 0.5f + sinf(t * 0.25f) * 10.0f;
+        float cy = io.DisplaySize.y * 0.5f + cosf(t * 0.21f) * 10.0f;
+        float baseR = 0.58f * sqrtf(io.DisplaySize.x * io.DisplaySize.x + io.DisplaySize.y * io.DisplaySize.y);
+        const int steps = 6;
+        for (int i = steps; i >= 1; --i)
+        {
+            // f 越大越靠外、alpha 越高 -> 边角更暗，形成暗角
+            float f = (float)i / (float)steps;
+            bg->AddCircleFilled(ImVec2(cx, cy), baseR * f, IM_COL32(0, 0, 0, (int)(20.0f * f)), 64);
+        }
+    }
+    // 3) 相框柔和投影：多层渐隐外扩，模拟光源自上而下的悬浮景深
+    for (int i = 7; i >= 1; --i)
+    {
+        float e = (float)i * 3.0f;
+        float a = (float)(8 - i) * 5.0f;
+        float offY = e * 0.5f + 4.0f;
+        bg->AddRectFilled(ImVec2(frameMin.x - e, frameMin.y - e * 0.5f),
+                          ImVec2(frameMax.x + e, frameMax.y + e + offY),
+                          IM_COL32(0, 0, 0, (int)ImClamp(a, 0.0f, 60.0f)),
+                          kFrameRounding + e, 0);
+    }
 #endif
     // 检测本帧是否有用户交互（鼠标移动/按键/修饰键），刷新活跃时间戳
     bool active = (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f);
@@ -84,25 +123,35 @@ void Frontend::update()
     active = active || io.KeyCtrl || io.KeyShift || io.KeyAlt || io.KeySuper;
     if (active) m_lastActiveTime = std::chrono::steady_clock::now();
 
-#if defined(__APPLE__) || defined(__ANDROID__)
+    // 根窗口 = 相框内芯：圆角 + 画框边缘 + 内边距（让控件自然收敛、留出“画框”呼吸感）
+    // macOS 保持半透明毛玻璃；Android 改为不透明画框画布
+#if defined(__APPLE__)
     ImGuiStyle& stk = ImGui::GetStyle();
     const ImVec4& wbg = stk.Colors[ImGuiCol_WindowBg];
-#endif
-#if defined(__APPLE__)
-    // macOS 毛玻璃:主内容窗口半透明,让底层 NSVisualEffectView 透出
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(wbg.x, wbg.y, wbg.z, 0.3f));
 #elif defined(__ANDROID__)
-    // Android 无系统毛玻璃:主窗口完全透明,让 GL 背景渐变透出
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(wbg.x, wbg.y, wbg.z, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.063f, 0.078f, 0.110f, 1.0f)); // ~ (16,20,28) 画布
+    ImGui::PushStyleColor(ImGuiCol_Border,   ImVec4(0.43f, 0.46f, 0.52f, 1.0f));     // ~ (110,118,132) 画框边缘
 #endif
-    // 全屏根窗口：去 1px 边框；左右贴边、上下留 16px 呼吸感（避免贴边太紧，又不出现侧边间隔）
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 16.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, kFrameEdge);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   kFrameRounding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(16.0f, 16.0f));
     ImGui::Begin("h e l l o", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
-    // 主窗口收敛进 Android 安全矩形（避开四角圆角与挖孔/刘海）；其余平台铺满整屏
+
+    // 定位：Android 收进相框安全矩形；其余平台铺满整屏
 #ifdef __ANDROID__
-    ImGui::SetWindowPos(ImVec2(sLeft, sTop));
-    ImGui::SetWindowSize(ImVec2(io.DisplaySize.x - sLeft - sRight, io.DisplaySize.y - sTop - sBottom));
+    ImGui::SetWindowPos(frameMin);
+    ImGui::SetWindowSize(ImVec2(frameMax.x - frameMin.x, frameMax.y - frameMin.y));
+    // 内芯顶部微光（画布受光感，强化景深）
+    {
+        ImDrawList* wdl = ImGui::GetWindowDrawList();
+        ImVec2 p0 = ImGui::GetWindowPos();
+        ImVec2 wsz = ImGui::GetWindowSize();
+        ImVec2 p1 = ImVec2(p0.x + wsz.x, p0.y + wsz.y);
+        wdl->AddRectFilledMultiColor(p0, p1,
+            IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 16),
+            IM_COL32(255, 255, 255, 0),  IM_COL32(255, 255, 255, 0));
+    }
 #else
     ImGui::SetWindowPos(ImVec2(0, 0));
     ImGui::SetWindowSize(io.DisplaySize);
@@ -118,9 +167,11 @@ void Frontend::update()
         m_lastActiveTime = std::chrono::steady_clock::now();
 
     ImGui::End();
-    ImGui::PopStyleVar(2);
-#if defined(__APPLE__) || defined(__ANDROID__)
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);   // WindowBorderSize + WindowRounding + WindowPadding
+#if defined(__APPLE__)
+    ImGui::PopStyleColor(1); // 仅 WindowBg
+#elif defined(__ANDROID__)
+    ImGui::PopStyleColor(2); // WindowBg + Border
 #endif
 
 }

@@ -7,7 +7,7 @@
 // - Introduction, links and more at the top of imgui.cpp
 
 #include "imgui.h"
-#include "mainWinDesktop.h"
+#include "Main.h"
 #include "Frontend/Frontend.h"
 #include "Logger.h"
 #include "imgui_impl_win32.h"

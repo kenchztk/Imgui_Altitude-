@@ -1,6 +1,6 @@
 #include "imgui.h"
 #include "imgui_internal.h"
-#include "StyleManager.h"
+#include "Frontend/StyleManager.h"
 
 bool StyleManager::ShowStyleSelector(const char* label)
 {

@@ -15,7 +15,7 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  "NativeApp", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "NativeApp", __VA_ARGS__)
 
-// 由 mainAndroid.cpp 的 Init() -> RegisterLocationNatives() 设置，供本文件访问 app/activity
+// 由 platform/android/Main.cpp 的 Init() -> RegisterLocationNatives() 设置，供本文件访问 app/activity
 static android_app* g_AndroidApp = nullptr;
 static android_app* GetAndroidApp() { return g_AndroidApp; }
 
@@ -288,7 +288,7 @@ void AndroidGetSafeInsets(float& top, float& right, float& bottom, float& left)
     top = g_SafeTop; right = g_SafeRight; bottom = g_SafeBottom; left = g_SafeLeft;
 }
 
-// 由 mainAndroid.cpp 的 Init() 调用：记录 app 并把 native 方法注册到 MainActivity 类
+// 由 platform/android/Main.cpp 的 Init() 调用：记录 app 并把 native 方法注册到 MainActivity 类
 bool RegisterLocationNatives(android_app* app)
 {
     g_AndroidApp = app;

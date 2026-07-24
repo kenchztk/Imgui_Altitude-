@@ -28,6 +28,36 @@ static bool                 g_Initialized = false;
 static char                 g_LogTag[] = "NativeApp";
 static std::string          g_IniFilename = "";
 
+// 背景渐变（全屏，作为 ImGui UI 的底层；主窗口透明后透出）
+static GLuint g_GradientProgram = 0;
+static GLuint g_GradientVAO = 0;
+static GLuint g_GradientVBO = 0;
+static GLint  g_GradTopLoc = -1;
+static GLint  g_GradBottomLoc = -1;
+static ImVec4 g_GradTop    = ImVec4(0.12f, 0.18f, 0.28f, 1.0f); // 深蓝（顶部）
+static ImVec4 g_GradBottom = ImVec4(0.04f, 0.05f, 0.09f, 1.0f); // 近黑藏蓝（底部）
+
+static const char* kGradientVertSrc =
+    "#version 300 es\n"
+    "in vec2 aPos;\n"
+    "out vec2 vUv;\n"
+    "void main(){\n"
+    "    vUv = aPos * 0.5 + 0.5;\n"
+    "    gl_Position = vec4(aPos, 0.0, 1.0);\n"
+    "}\n";
+static const char* kGradientFragSrc =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "in vec2 vUv;\n"
+    "uniform vec3 uTopColor;\n"
+    "uniform vec3 uBottomColor;\n"
+    "out vec4 fragColor;\n"
+    "void main(){\n"
+    "    float t = clamp(vUv.y, 0.0, 1.0);\n"
+    "    vec3 c = mix(uBottomColor, uTopColor, t);\n"
+    "    fragColor = vec4(c, 1.0);\n"
+    "}\n";
+
 // Forward declarations of helper functions
 static void Init(struct android_app* app);
 static void Shutdown();
@@ -35,6 +65,7 @@ static void MainLoopStep();
 static int ShowSoftKeyboardInput();
 static int PollUnicodeChars();
 static int GetAssetData(const char* filename, void** out_data);
+static GLuint CreateGradientProgram();
 
 // 由 LocationProviderAndroid.cpp 提供：注册定位 native 方法到 MainActivity
 bool RegisterLocationNatives(struct android_app* app);
@@ -171,6 +202,30 @@ void Init(struct android_app* app)
     ImGui_ImplAndroid_Init(g_App->window);
     ImGui_ImplOpenGL3_Init("#version 300 es");
 
+    // 创建背景渐变（全屏，UI 底层）
+    g_GradientProgram = CreateGradientProgram();
+    if (g_GradientProgram)
+    {
+        g_GradTopLoc    = glGetUniformLocation(g_GradientProgram, "uTopColor");
+        g_GradBottomLoc = glGetUniformLocation(g_GradientProgram, "uBottomColor");
+        // 覆盖全屏的大三角形：(-1,-1),(3,-1),(-1,3)
+        float verts[] = { -1.0f, -1.0f,  3.0f, -1.0f,  -1.0f, 3.0f };
+        glGenVertexArrays(1, &g_GradientVAO);
+        glGenBuffers(1, &g_GradientVBO);
+        glBindVertexArray(g_GradientVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, g_GradientVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+        GLint posLoc = glGetAttribLocation(g_GradientProgram, "aPos");
+        glEnableVertexAttribArray(posLoc);
+        glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+        glBindVertexArray(0);
+        spdlog::info("[Android] 背景渐变着色器已就绪");
+    }
+    else
+    {
+        spdlog::error("[Android] 背景渐变着色器创建失败，将回退为纯色清屏");
+    }
+
     // Load Fonts
     // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
     // - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
@@ -246,6 +301,22 @@ void MainLoopStep()
     glViewport(0, 0, (int)io.DisplaySize.x, (int)io.DisplaySize.y);
     glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
     glClear(GL_COLOR_BUFFER_BIT);
+
+    // 背景渐变（全屏，作为 UI 底层）；主窗口透明后透出。
+    // 关掉混合以保证不透明覆盖，绘制完由 ImGui 渲染重新开启混合。
+    if (g_GradientProgram)
+    {
+        glDisable(GL_BLEND);
+        glUseProgram(g_GradientProgram);
+        glUniform3f(g_GradTopLoc, g_GradTop.x, g_GradTop.y, g_GradTop.z);
+        glUniform3f(g_GradBottomLoc, g_GradBottom.x, g_GradBottom.y, g_GradBottom.z);
+        glBindVertexArray(g_GradientVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+        glUseProgram(0);
+        glEnable(GL_BLEND);
+    }
+
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     eglSwapBuffers(g_EglDisplay, g_EglSurface);
 }
@@ -258,6 +329,12 @@ void Shutdown()
     // Cleanup
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplAndroid_Shutdown();
+
+    // 释放背景渐变资源
+    if (g_GradientProgram) { glDeleteProgram(g_GradientProgram); g_GradientProgram = 0; }
+    if (g_GradientVAO)     { glDeleteVertexArrays(1, &g_GradientVAO); g_GradientVAO = 0; }
+    if (g_GradientVBO)     { glDeleteBuffers(1, &g_GradientVBO); g_GradientVBO = 0; }
+
     ImGui::DestroyContext();
 
     if (g_EglDisplay != EGL_NO_DISPLAY)
@@ -285,6 +362,51 @@ void Shutdown()
 }
 
 // Helper functions
+
+// 编译并链接背景渐变着色器程序；失败时返回 0 并记录错误
+static GLuint CreateGradientProgram()
+{
+    auto compile = [](GLenum type, const char* src, const char* tag) -> GLuint {
+        GLuint sh = glCreateShader(type);
+        glShaderSource(sh, 1, &src, nullptr);
+        glCompileShader(sh);
+        GLint ok = 0;
+        glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+        if (!ok)
+        {
+            GLint len = 0;
+            glGetShaderiv(sh, GL_INFO_LOG_LENGTH, &len);
+            std::string log(len, '\0');
+            glGetShaderInfoLog(sh, len, nullptr, log.data());
+            __android_log_print(ANDROID_LOG_ERROR, g_LogTag, "[Gradient] %s 编译失败: %s", tag, log.c_str());
+            glDeleteShader(sh);
+            return 0;
+        }
+        return sh;
+    };
+    GLuint vs = compile(GL_VERTEX_SHADER, kGradientVertSrc, "vertex");
+    GLuint fs = compile(GL_FRAGMENT_SHADER, kGradientFragSrc, "fragment");
+    if (!vs || !fs) return 0;
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glLinkProgram(prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    GLint ok = 0;
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok)
+    {
+        GLint len = 0;
+        glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &len);
+        std::string log(len, '\0');
+        glGetProgramInfoLog(prog, len, nullptr, log.data());
+        __android_log_print(ANDROID_LOG_ERROR, g_LogTag, "[Gradient] 链接失败: %s", log.c_str());
+        glDeleteProgram(prog);
+        return 0;
+    }
+    return prog;
+}
 
 // Unfortunately, there is no way to show the on-screen input from native code.
 // Therefore, we call ShowSoftKeyboardInput() of the main activity implemented in MainActivity.kt via JNI.

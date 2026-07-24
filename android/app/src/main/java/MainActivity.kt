@@ -7,14 +7,86 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.RoundedCorner
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.inputmethod.InputMethodManager
 import java.util.concurrent.LinkedBlockingQueue
 
 class MainActivity : NativeActivity() {
     public override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        hideSystemUI()
+        // NativeActivity 可能在创建 Surface 后重置窗口标志，监听“系统栏重新可见”并立即再隐藏
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            @Suppress("DEPRECATION")
+            window.decorView.setOnSystemUiVisibilityChangeListener { visibility ->
+                if ((visibility and View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) hideSystemUI()
+            }
+        }
+        // 注意：不要在 onCreate 里 post 调用 nativeSetSafeAreaInsets —— RegisterNatives 在 native
+        // 主循环 android_main 中执行，晚于本 onCreate，post 会早于注册导致 UnsatisfiedLinkError 崩溃。
+        // 安全区改由 onWindowFocusChanged（时机远晚于注册）统一回传。
+    }
+
+    // 焦点变化（如切回 App）后系统栏可能复现，重新隐藏并刷新安全区
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            hideSystemUI()
+            pushSafeAreaInsets()
+        }
+    }
+
+    // 读取系统安全区（圆角 + 挖孔/刘海），回传给 native 供 ImGui 收敛进安全矩形
+    private fun pushSafeAreaInsets() {
+        val insets = window.decorView.rootWindowInsets ?: return
+        var top = 0; var right = 0; var bottom = 0; var left = 0
+        // 挖孔/刘海安全区（API 29+）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            insets.displayCutout?.let { c ->
+                top = maxOf(top, c.safeInsetTop)
+                right = maxOf(right, c.safeInsetRight)
+                bottom = maxOf(bottom, c.safeInsetBottom)
+                left = maxOf(left, c.safeInsetLeft)
+            }
+        }
+        // 屏幕四角圆角半径（API 31+）：每个角向相邻两条边各贡献其半径
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            fun r(pos: Int): Int = insets.getRoundedCorner(pos)?.radius ?: 0
+            top = maxOf(top, maxOf(r(RoundedCorner.POSITION_TOP_LEFT), r(RoundedCorner.POSITION_TOP_RIGHT)))
+            bottom = maxOf(bottom, maxOf(r(RoundedCorner.POSITION_BOTTOM_LEFT), r(RoundedCorner.POSITION_BOTTOM_RIGHT)))
+            left = maxOf(left, maxOf(r(RoundedCorner.POSITION_TOP_LEFT), r(RoundedCorner.POSITION_BOTTOM_LEFT)))
+            right = maxOf(right, maxOf(r(RoundedCorner.POSITION_TOP_RIGHT), r(RoundedCorner.POSITION_BOTTOM_RIGHT)))
+        }
+        try {
+            nativeSetSafeAreaInsets(top.toFloat(), right.toFloat(), bottom.toFloat(), left.toFloat())
+        } catch (e: UnsatisfiedLinkError) {
+            // native 尚未完成 JNI 注册（极早期调用）时忽略，安全区暂留 0；下次 onWindowFocusChanged 会补传
+        }
+    }
+
+    // 沉浸式全屏：隐藏状态栏与导航栏，消除程序周边“边框”
+    private fun hideSystemUI() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.let { c ->
+                c.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                c.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN)
+        }
     }
 
     fun showSoftInput() {
@@ -48,6 +120,9 @@ class MainActivity : NativeActivity() {
     external fun nativeOnLocation(lat: Double, lon: Double, alt: Double, acc: Double, ts: Long)
     external fun nativeOnPermissionResult(granted: Boolean)
     external fun nativeOnHeading(headingRadians: Double)
+
+    // 安全区（圆角/挖孔）内边距，由 Kotlin 读出后回传 native 供 ImGui 收敛进安全矩形
+    external fun nativeSetSafeAreaInsets(top: Float, right: Float, bottom: Float, left: Float)
 
     private val LOCATION_REQ = 1001
     private var locationManager: LocationManager? = null

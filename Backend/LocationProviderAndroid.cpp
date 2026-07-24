@@ -271,6 +271,23 @@ static void JNICALL nativeOnHeading(JNIEnv* /*env*/, jobject /*thiz*/, jdouble h
         g_Inst->onHeadingPushed(headingRadians);
 }
 
+// 安全区（圆角/挖孔）内边距，由 Kotlin 经 JNI 回传；单位 px，与 io.DisplaySize 同坐标系
+static float g_SafeTop = 0.0f, g_SafeRight = 0.0f, g_SafeBottom = 0.0f, g_SafeLeft = 0.0f;
+
+// 签名 (FFFF)V：top, right, bottom, left（设备像素）
+static void JNICALL nativeSetSafeAreaInsets(JNIEnv* /*env*/, jobject /*thiz*/,
+    jfloat top, jfloat right, jfloat bottom, jfloat left)
+{
+    g_SafeTop = top; g_SafeRight = right; g_SafeBottom = bottom; g_SafeLeft = left;
+    spdlog::info("[SafeArea] 安全区内边距 top={} right={} bottom={} left={}", top, right, bottom, left);
+}
+
+// 供 Frontend 读取安全区，使主窗口收敛进安全矩形，避免控件被圆角/挖孔裁切
+void AndroidGetSafeInsets(float& top, float& right, float& bottom, float& left)
+{
+    top = g_SafeTop; right = g_SafeRight; bottom = g_SafeBottom; left = g_SafeLeft;
+}
+
 // 由 mainAndroid.cpp 的 Init() 调用：记录 app 并把 native 方法注册到 MainActivity 类
 bool RegisterLocationNatives(android_app* app)
 {
@@ -293,6 +310,7 @@ bool RegisterLocationNatives(android_app* app)
         {"nativeOnLocation",         "(DDDDJ)V", (void*)nativeOnLocation},
         {"nativeOnPermissionResult", "(Z)V",     (void*)nativeOnPermissionResult},
         {"nativeOnHeading",          "(D)V",     (void*)nativeOnHeading},
+        {"nativeSetSafeAreaInsets",  "(FFFF)V",  (void*)nativeSetSafeAreaInsets},
     };
     jint res = env->RegisterNatives(clazz, methods, sizeof(methods) / sizeof(methods[0]));
     if (res != 0)

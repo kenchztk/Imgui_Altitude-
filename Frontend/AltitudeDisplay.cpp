@@ -93,7 +93,8 @@ bool AltitudeDisplay::render(const LocationData& data, LocationStatus st,
     bool interacted = false;
 
     // macOS 毛玻璃：子窗口背景透明，继承父窗口半透明效果
-#if defined(__APPLE__)
+    // Android：子窗口背景透明，让 GL 背景渐变透出
+#if defined(__APPLE__) || defined(__ANDROID__)
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
 #endif
 
@@ -129,7 +130,7 @@ bool AltitudeDisplay::render(const LocationData& data, LocationStatus st,
     interacted |= renderControls(data, st, loc);
     ImGui::EndChild();
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__ANDROID__)
     ImGui::PopStyleColor();
 #endif
     return interacted;

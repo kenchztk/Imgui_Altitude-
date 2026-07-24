@@ -15,6 +15,8 @@
 #if defined(__ANDROID__)
 // mainAndroid.cpp 提供：从 APK assets 读取资源到内存（IM_ALLOC 分配，ImGui 接管释放）
 extern int AndroidGetAssetData(const char* filename, void** outData);
+// LocationProviderAndroid.cpp 提供：Android 安全区（圆角/挖孔）内边距，单位与 io.DisplaySize 一致
+extern void AndroidGetSafeInsets(float& top, float& right, float& bottom, float& left);
 #elif defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
 // 解析 .app bundle Resources 下资源的绝对路径；裸二进制运行（无 bundle）时返回空
@@ -64,23 +66,48 @@ int Frontend::init(float vFontSize, float vGlobalScale)
 void Frontend::update()
 {
     ImGuiIO& io = ImGui::GetIO();
+    // Android 安全区（圆角/挖孔）内边距，用于收敛主窗口，避免控件被裁切到屏幕外
+#ifdef __ANDROID__
+    float sTop = 0.0f, sRight = 0.0f, sBottom = 0.0f, sLeft = 0.0f;
+    AndroidGetSafeInsets(sTop, sRight, sBottom, sLeft);
+    // 个别厂商 ROM 会把圆角/挖孔安全区报得过大（曲率半径可达数百 px），导致内容区被过度内缩。
+    // 这里把每边安全区限制在屏幕对应维度的 8% 以内：正常圆角屏（占比 4~7%）不触发，异常大值被压回合理范围。
+    const float kMaxInsetFrac = 0.08f;
+    if (sTop    > io.DisplaySize.y * kMaxInsetFrac) sTop    = io.DisplaySize.y * kMaxInsetFrac;
+    if (sBottom > io.DisplaySize.y * kMaxInsetFrac) sBottom = io.DisplaySize.y * kMaxInsetFrac;
+    if (sLeft   > io.DisplaySize.x * kMaxInsetFrac) sLeft   = io.DisplaySize.x * kMaxInsetFrac;
+    if (sRight  > io.DisplaySize.x * kMaxInsetFrac) sRight  = io.DisplaySize.x * kMaxInsetFrac;
+#endif
     // 检测本帧是否有用户交互（鼠标移动/按键/修饰键），刷新活跃时间戳
     bool active = (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f);
     for (int i = 0; i < 5 && !active; ++i) active = active || io.MouseDown[i];
     active = active || io.KeyCtrl || io.KeyShift || io.KeyAlt || io.KeySuper;
     if (active) m_lastActiveTime = std::chrono::steady_clock::now();
 
-#if defined(__APPLE__)
-    // macOS 毛玻璃:主内容窗口半透明,让底层 NSVisualEffectView 透出
+#if defined(__APPLE__) || defined(__ANDROID__)
     ImGuiStyle& stk = ImGui::GetStyle();
     const ImVec4& wbg = stk.Colors[ImGuiCol_WindowBg];
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(wbg.x, wbg.y, wbg.z, 0.3f));
 #endif
+#if defined(__APPLE__)
+    // macOS 毛玻璃:主内容窗口半透明,让底层 NSVisualEffectView 透出
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(wbg.x, wbg.y, wbg.z, 0.3f));
+#elif defined(__ANDROID__)
+    // Android 无系统毛玻璃:主窗口完全透明,让 GL 背景渐变透出
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(wbg.x, wbg.y, wbg.z, 0.0f));
+#endif
+    // 全屏根窗口：去 1px 边框；左右贴边、上下留 16px 呼吸感（避免贴边太紧，又不出现侧边间隔）
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 16.0f));
     ImGui::Begin("h e l l o", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
-    // 铺满整个显示区域，左上角对齐
+    // 主窗口收敛进 Android 安全矩形（避开四角圆角与挖孔/刘海）；其余平台铺满整屏
+#ifdef __ANDROID__
+    ImGui::SetWindowPos(ImVec2(sLeft, sTop));
+    ImGui::SetWindowSize(ImVec2(io.DisplaySize.x - sLeft - sRight, io.DisplaySize.y - sTop - sBottom));
+#else
     ImGui::SetWindowPos(ImVec2(0, 0));
     ImGui::SetWindowSize(io.DisplaySize);
-    
+#endif
+
     // -- 海拔高度显示（4 模式 + 动效）--
     LocationProvider& loc = Backend::Instance().location();
     LocationData data = loc.lastKnown();
@@ -91,7 +118,8 @@ void Frontend::update()
         m_lastActiveTime = std::chrono::steady_clock::now();
 
     ImGui::End();
-#if defined(__APPLE__)
+    ImGui::PopStyleVar(2);
+#if defined(__APPLE__) || defined(__ANDROID__)
     ImGui::PopStyleColor();
 #endif
 

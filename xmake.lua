@@ -26,7 +26,6 @@ end
 
 add_requires("fmt 12.2.0", { alias = "fmt", system = false, configs = {header_only = true}})
 add_requires("nlohmann_json v3.12.0", { alias = "nlohmann_json", system = false})
-add_requires("geographiclib 2.1.1",   { alias = "geographiclib", system = false, configs = {shared = false}})
 
 -- ============================================================================
 -- imgui 动态库（先 macOS 跑通，后续扩展 Android / Windows）
@@ -73,7 +72,7 @@ target("NativeApp")
     add_includedirs("utils")
     add_files("utils/*.cpp")
     -- packages
-    add_packages("geographiclib", "nlohmann_json", "fmt")
+    add_packages("nlohmann_json", "fmt")
     -- 3rds
     add_includedirs(".", "ThirdParty")
     -- imgui
@@ -84,11 +83,19 @@ target("NativeApp")
             add_files("ThirdParty/imgui/" .. f)
         end
     end
-    add_files("Frontend/*.cpp|WebViewPanel.cpp", "Backend/*.cpp")
+    add_files("Frontend/*.cpp|WebViewPanel.cpp", "Frontend/Widgets/*.cpp", "Backend/*.cpp")
     add_includedirs("ThirdParty/imgui", "ThirdParty/imgui/backends")
     if is_plat("macosx", "android") then
         add_deps("imgui")
     end
+    -- imgui_toggle：iOS 风格开关控件，替代手绘 DrawToggle（0BSD；实现分散在多个 cpp）
+    add_includedirs("ThirdParty/imgui_toggle")
+    add_files("ThirdParty/imgui_toggle/imgui_toggle.cpp",
+              "ThirdParty/imgui_toggle/imgui_toggle_renderer.cpp",
+              "ThirdParty/imgui_toggle/imgui_toggle_palette.cpp")
+    -- implot：趋势折线图，替代 RealtimeScreen 手绘折线（ImGui 同生态，除 ImGui 外零依赖）
+    add_includedirs("ThirdParty/implot")
+    add_files("ThirdParty/implot/implot.cpp", "ThirdParty/implot/implot_items.cpp")
     -- IconFontCppHeaders
     add_includedirs("ThirdParty/IconFontCppHeaders")
     -- spdlog
@@ -122,6 +129,9 @@ target("NativeApp")
         add_includedirs("$(ndk)/sources/android/native_app_glue")
         add_files("$(ndk)/sources/android/native_app_glue/android_native_app_glue.c");
         add_files("platform/android/Main.cpp")
+        -- EGM96 球谐系数修正（纯 C，系数预编译进 EGM96_data.h，无需运行时数据文件）
+        add_files("ThirdParty/EGM96/EGM96.c")
+        add_includedirs("ThirdParty/EGM96")
         add_defines("IMGUI_IMPL_OPENGL_ES3")
         add_ldflags("-u ANativeActivity_onCreate")
         add_ldflags("-Wl,--no-undefined", "-Wl,--exclude-libs,ALL", "-Wl,-Bsymbolic")
@@ -169,16 +179,6 @@ target("NativeApp")
                 print("✅ 已拷贝 libc++_shared.so -> android/app/libs/arm64-v8a")
             else
                 print("⚠️ 未找到 libc++_shared.so（" .. cxx_so .. "），请手动补入 jniLibs")
-            end
-            -- 拷贝 EGM96 geoid 数据到 assets，供运行时 AAssetManager 读取
-            local geoid_src = "assets/geoid/egm96-5.pgm"
-            if os.isfile(geoid_src) then
-                local geoid_dest_dir = "android/app/src/main/assets/geoid"
-                os.mkdir(geoid_dest_dir)
-                os.cp(geoid_src, path.join(geoid_dest_dir, "egm96-5.pgm"))
-                print("✅ 已拷贝 EGM96 数据: " .. path.join(geoid_dest_dir, "egm96-5.pgm"))
-            else
-                print("⚠️ 未找到 " .. geoid_src .. "，跳过 EGM96 数据拷贝")
             end
             -- 字体分发：拷贝到 APK assets/fonts/，运行时经 AAssetManager 读取
             local font_dest_dir = "android/app/src/main/assets/fonts"

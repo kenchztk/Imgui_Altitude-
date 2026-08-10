@@ -1,13 +1,9 @@
 #if defined(__ANDROID__)
 #include "LocationProvider.h"
-#include <GeographicLib/Geoid.hpp>
+#include "EGM96.h"
 #include <jni.h>
 #include <android_native_app_glue.h>
-#include <android/asset_manager.h>
 #include <android/log.h>
-#include <filesystem>
-#include <fstream>
-#include <sys/stat.h>
 #include <cstring>
 #include <memory>
 #include <spdlog/spdlog.h>
@@ -37,12 +33,9 @@ class LocationProviderAndroid : public LocationProvider
         void onHeadingPushed(double headingRadians);
 
     private:
-        // 把 assets/geoid/egm96-5.pgm 拷贝到内部存储，返回 geoid 数据目录（失败返回空）
-        std::string prepareGeoidData();
         // 调用 MainActivity 的无参 void 方法
         void callKotlinVoid(const char* methodName);
 
-        std::unique_ptr<GeographicLib::Geoid> m_geoid;
         double m_heading = 0.0; // 最新方位角（弧度）
 };
 
@@ -52,75 +45,12 @@ static LocationProviderAndroid* g_Inst = nullptr;
 LocationProviderAndroid::LocationProviderAndroid()
 {
     g_Inst = this;
-    std::string dir = prepareGeoidData();
-    if (!dir.empty())
-    {
-        try
-        {
-            // threadsafe=true：数据读入内存，多线程安全（EGM96 5' 约 18MB）
-            m_geoid = std::make_unique<GeographicLib::Geoid>("egm96-5", dir, true, true);
-            LOGI("Geoid egm96-5 loaded from %s", dir.c_str());
-        }
-        catch (const std::exception& e)
-        {
-            LOGE("Geoid load failed: %s", e.what());
-            m_geoid.reset();
-        }
-    }
-    else
-    {
-        LOGE("Geoid data dir unavailable, fallback to ellipsoid height");
-    }
 }
 
 LocationProviderAndroid::~LocationProviderAndroid()
 {
     if (g_Inst == this)
         g_Inst = nullptr;
-}
-
-std::string LocationProviderAndroid::prepareGeoidData()
-{
-    android_app* app = GetAndroidApp();
-    if (!app || !app->activity)
-        return "";
-    AAssetManager* mgr = app->activity->assetManager;
-    const char* dataPath = app->activity->internalDataPath;
-    if (!mgr || !dataPath || dataPath[0] == '\0')
-        return "";
-
-    std::string geoidDir = std::string(dataPath) + "/geoid";
-    std::string dst = geoidDir + "/egm96-5.pgm";
-    std::error_code ec;
-    std::filesystem::create_directories(geoidDir, ec);
-
-    // 已存在则跳过拷贝（避免每次启动重复读写）
-    struct stat st;
-    if (stat(dst.c_str(), &st) == 0)
-        return geoidDir;
-
-    AAsset* asset = AAssetManager_open(mgr, "geoid/egm96-5.pgm", AASSET_MODE_BUFFER);
-    if (!asset)
-    {
-        LOGE("assets/geoid/egm96-5.pgm not found");
-        return "";
-    }
-    const void* buf = AAsset_getBuffer(asset);
-    off_t len = AAsset_getLength(asset);
-    std::ofstream f(dst, std::ios::binary | std::ios::trunc);
-    if (f)
-    {
-        f.write(static_cast<const char*>(buf), len);
-        f.close();
-        LOGI("copied egm96-5.pgm -> %s (%ld bytes)", dst.c_str(), (long)len);
-    }
-    else
-    {
-        LOGE("cannot write %s", dst.c_str());
-        dst.clear();
-    }
-    AAsset_close(asset);
-    return dst.empty() ? std::string() : geoidDir;
 }
 
 void LocationProviderAndroid::callKotlinVoid(const char* methodName)
@@ -202,23 +132,10 @@ void LocationProviderAndroid::onLocationPushed(double lat, double lon, double al
     d.heading = m_heading;       // 最新方位角
     d.timestampMs = ts;
 
-    // 用 EGM96 geoid 将椭球高修正为 MSL（正高）
-    if (m_geoid)
-    {
-        try
-        {
-            d.altitudeMSL = m_geoid->ConvertHeight(lat, lon, alt, GeographicLib::Geoid::ELLIPSOIDTOGEOID);
-        }
-        catch (const std::exception& e)
-        {
-            LOGE("ConvertHeight failed: %s", e.what());
-            d.altitudeMSL = alt;  // 退化：直接用椭球高
-        }
-    }
-    else
-    {
-        d.altitudeMSL = alt;  // 无 geoid 数据，退化用椭球高
-    }
+    // 用 EGM96 球谐系数计算大地水准面起伏 N，椭球高减 N 得 MSL 正高
+    // 系数预编译进 EGM96_data.h，无需运行时数据文件
+    double N = egm96_compute_altitude_offset(lat, lon);
+    d.altitudeMSL = alt - N;
     d.valid = true;
     updateAndNotify(d, LocationStatus::Active);
 }

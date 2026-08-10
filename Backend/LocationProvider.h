@@ -7,7 +7,7 @@
 // 一次定位采样的数据载体
 struct LocationData
 {
-    double altitudeMSL = 0.0;        // 海拔（MSL/正高，米）—— UI 主显示
+    double altitudeMSL = 0.0;        // 海拔（MSL/正高，米）—— GPS+EGM96 绝对基准
     double altitudeEllipsoid = 0.0;  // WGS84 椭球高（米）—— Android 原始值，macOS 为 0
     double latitude = 0.0;           // 纬度（度）
     double longitude = 0.0;          // 经度（度）
@@ -16,6 +16,12 @@ struct LocationData
     double heading = 0.0;            // 方位角（真北为 0，顺时针 0~2π，弧度）
     int64_t timestampMs = 0;         // 采样时间戳（毫秒）
     bool valid = false;              // 是否已有有效数据
+
+    // -- 气压计融合层输出（由 AltitudeFusion 填充）--
+    double pressureHPa = 0.0;        // 气压计原始气压（百帕/hPa），无气压计为 0
+    double fusedAltitude = 0.0;      // 气压+GPS 融合后的海拔（米）—— UI 主显示；无气压计时等于 altitudeMSL
+    double climbRate = 0.0;          // 垂直速率（米/秒，正为上升）
+    bool   hasPressure = false;      // 本次数据是否含气压计信息
 };
 
 // 定位状态机

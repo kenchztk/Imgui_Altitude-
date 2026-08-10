@@ -1,119 +1,56 @@
-# 交接文档
+# 移动设备海拔高度获取方案 - 会话交接文档
 
-> 本文件供新会话快速了解上下文，避免重复踩坑。
+## 任务目标
 
-## 一、我们在做什么任务
+探讨并确定移动设备（Android/iOS）上获取海拔高度的技术方案，核心约束是**高海拔无网络环境下必须可用**。
 
-重构 `AltitudeDisplay` 的 UI 布局，用 `BeginChild`/`EndChild` 将三段内容（模式切换 / 海拔显示 / 底部控制区）完全隔离，让 ImGui 自动管理游标流转，彻底移除"renderXxx 返回 contentBottomY + 手动 SetCursorScreenPos 跳转"的脆弱机制。
+## 已完成的工作
 
-## 二、已经完成了什么
+### 1. 方案调研与对比
 
-### 1. BeginChild 三段隔离（核心重构）
+调研了移动端获取海拔的四种主要技术路线，并做了系统对比：
 
-- **`Frontend/AltitudeDisplay.h`**：5 个 `renderXxx` 返回类型 `float` → `void`，参数名 `winW/winH` → `availW/availH`；`renderModeSwitcher` 移除 `winW` 参数；新增 `estimateControlsHeight()` 声明。
-- **`Frontend/AltitudeDisplay.cpp`**：
-  - `render()` 用三个 `BeginChild` 包裹：
-    - 第1段 `##mode_switcher`：`ImGuiChildFlags_AutoResizeY | AlwaysUseWindowPadding`
-    - 第2段 `##alt_display`：`size.y = avail.y - h3`，弹性填满剩余，`ImMax(..., 50.0f)` 兜底
-    - 第3段 `##controls`：`ImGuiChildFlags_AutoResizeY | AlwaysUseWindowPadding`
-  - macOS 下 `PushStyleColor(ImGuiCol_ChildBg, 0)` 保留毛玻璃
-  - 5 个 `renderXxx` 内部坐标基准从 `displaySize` 改为子窗口 `GetContentRegionAvail()` + `GetWindowPos()`
-  - `renderModeSwitcher` 用 `GetContentRegionAvail().x` 获取宽度
-  - 新增 `estimateControlsHeight()` 按 `m_showDetails` 状态预估第3段高度
+| 方案 | 原理 | 离线 | 绝对精度 | 结论 |
+|---|---|---|---|---|
+| GPS 原始高度 | 卫星解算 WGS84 椭球面高度 | 是 | ±5~50m | 非真实海拔，需转换 |
+| 气压计传感器 | 大气压强推算高度 | 是 | 需校准基准气压 | 只能测相对变化 |
+| 在线高程 API | GPS 经纬度 + 网络查询地形库 | **否** | ±1~10m | 高海拔无网络不可用，排除 |
+| 本地 EGM 模型 | GPS + 本地大地水准面模型离线转换 | 是 | ±2~5m | **推荐核心方案** |
 
-### 2. 尺寸比例调大
+### 2. 确定推荐方案
 
-模式二/三/四的尺寸比例从"整个窗口"时代的值调大，适配子窗口可用空间：
+**最终推荐方案：GPS + 本地 EGM96 模型 + 气压计融合**
 
-| 模式 | 参数 | 旧值 | 新值 |
-|------|------|------|------|
-| Gauge | R 系数 | 0.28 | 0.40 |
-| Gauge | center.y 比例 | 0.36 | 0.44 |
-| Gauge | 数值字体 | 4.0f | 5.0f |
-| HUD | tapeX 比例 | 0.28 | 0.35 |
-| HUD | y0/y1 比例 | 0.26/0.64 | 0.12/0.88 |
-| HUD | 数值字体 | 4.0f | 5.0f |
-| Card | p_min/p_max Y | 0.20/0.64 | 0.06/0.94 |
-| Card | 数值字体 | 5.0f | 6.0f |
+- **绝对海拔基准**：GPS 获取 WGS84 椭球面高度 → 本地 EGM96 模型离线转换为 MSL 海拔（公式：H = h - N）
+- **动态变化追踪**：气压计提供高灵敏度相对高度变化（爬升/下降速率）
+- **气压计校准**：用 GPS+EGM 的绝对海拔值作为气压计校准锚点，定期消除漂移
+- **网络恢复时（可选）**：联网获取实时气象数据修正气压基准，进一步提升精度
 
-## 三、当前卡在哪
+### 3. 竞品/开源方案分析
+**项目：nicolas-van/egm96-universal**
+- 平台：JavaScript/TypeScript npm 包，支持浏览器和 Node.js
+- 功能：WGS84 椭球高 ↔ EGM96 MSL 海拔的双向转换
+- 实现：内置 NGA 官方 EGM96 数据文件 WW15MGH.DAC（约 2~3MB），双线性插值，CI 用 Fortran 参考实现验证精度
+- **与我们方案的关系**：正好是我们方案中"GPS 椭球高 → MSL 海拔"这一环节的现成实现，可直接使用或参考移植
 
-**无明显卡点**，编译通过（零警告，仅 spdlog 第三方告警），应用已启动。
+## 当前卡点
 
-用户可能仍需视觉微调（如某些模式的比例、间距），但核心布局机制已稳定。
+**方案调研阶段已完成，尚未进入代码实现阶段。** 以下是需要进一步决策的问题：
 
-## 四、下一步计划
+1. **平台确认**：目标是 Android 原生、iOS 原生、还是 React Native/Flutter 跨平台？决定 EGM96 库是直接用 egm96-universal（JS/TS）还是需要用 Kotlin/Swift 移植
+2. **EGM96 vs EGM2008**：EGM96 数据约 2~3MB 精度 ±2~5m，EGM2008 约 200MB+ 精度更高。需根据 App 体积预算和对精度的要求做选择
+3. **气压计融合算法**：是采用简单的 GPS 定期校准，还是引入类似 AltitudeEstimation 的 Kalman/互补滤波？取决于产品对"平滑爬升曲线"的需求强度
 
-1. **视觉微调**（可选）：用户查看应用后，可能对某些模式的尺寸/间距提出进一步调整需求。
-2. **Android 适配**：当前改动仅验证 macOS，Android 端需编译测试（`xmake f -p android -a arm64-v8a && xmake`）。
-3. **Heading 支持**：macOS 的 `heading` 始终为 0.0（CoreLocation/CoreMotion 在 macOS 不可用），Android 端 JNI 接口已就绪（`nativeOnHeading`），需 Kotlin 侧调用。
+## 下一步计划
 
-## 五、踩过的坑（不要再踩）
+1. **确认平台和技术栈** → 决定 EGM 模型的实现方式
+2. **实现核心链路**：GPS 获取 WGS84 高度 → EGM96 离线转换 → 输出 MSL 海拔
+3. **接入气压计**：实现相对高度追踪 + GPS 绝对值校准
+4. **无网络场景测试**：在高海拔无网络环境下验证精度和稳定性
 
-### 1. 子窗口 padding 未计入高度预估
+## 踩过的坑（不要再踩）
 
-**问题**：第3段用 `AlwaysUseWindowPadding`，子窗口上下各加 `WindowPadding.y`（默认 8px），但 `estimateControlsHeight()` 没算这部分，导致第2段占多了，第3段被挤出窗口底部。
-
-**修复**：`estimateControlsHeight()` 返回值加 `padY * 2.0f`。
-
-### 2. 尺寸比例未适配子窗口
-
-**问题**：模式二/三/四的尺寸比例是"整个窗口"时代的值，现在 `availH` 只是第2段子窗口的高度（比整个窗口小），这些模式显得更小。
-
-**修复**：调大比例（见上文表格）。
-
-### 3. `ImGuiStyle` 字段名错误
-
-**问题**：`estimateControlsHeight()` 用了 `sty.SeparatorPadding`，但 ImGui 1.92.8 只有 `SeparatorTextPadding`（用于 `SeparatorText`，不是普通 `Separator`）。
-
-**修复**：改用 `(sp + 1.0f)` 估算普通 Separator 高度。
-
-### 4. `CenteredText` / `renderStatusBadge` 坐标语义
-
-**关键约定**：
-- `ImDrawList` 绘制用**绝对屏幕坐标**（`wp.x + offsetX, wp.y + offsetY`）
-- `CenteredText` / `renderStatusBadge` 内部用 `GetWindowPos()`，传参是**相对子窗口的偏移**
-- 当有绝对坐标变量（如 `center.y`）需传给 `CenteredText` 时，必须减 `wp.y` 转相对
-
-**示例**：
-```cpp
-// center 是绝对坐标
-CenteredText(valStr, 5.0f, col, availW, center.y - wp.y - R * 0.25f);  // 减 wp.y 转相对
-renderStatusBadge(st, availW * 0.5f, center.y + R1 + 24.0f - wp.y);    // 减 wp.y 转相对
-```
-
-### 5. macOS 必须用 `open` 启动
-
-**问题**：`xmake run` 启动裸二进制，无 bundle 上下文，CoreLocation 会静默丢弃授权请求（不弹窗不回调）。
-
-**正确做法**：`open pkg/NativeApp.app`
-
-### 6. macOS 毛玻璃需 `PushStyleColor`
-
-**问题**：`BeginChild` 默认用 `ImGuiCol_ChildBg` 背景色，不透明会遮挡毛玻璃效果。
-
-**修复**：macOS 下 `PushStyleColor(ImGuiCol_ChildBg, ImVec4(0,0,0,0))`，子窗口背景透明。
-
-## 六、关键文件速查
-
-| 文件 | 作用 |
-|------|------|
-| `Frontend/AltitudeDisplay.h` | 5 种显示模式声明 |
-| `Frontend/AltitudeDisplay.cpp` | 渲染实现（BeginChild 布局 + 5 种模式绘制） |
-| `Frontend/Frontend.cpp` | 主窗口创建，调用 `m_altDisplay.render()` |
-| `Backend/LocationProvider.h` | 定位数据/状态/回调抽象 |
-| `Backend/LocationProviderMac.mm` | macOS CoreLocation 实现（heading 始终 0） |
-| `Backend/LocationProviderAndroid.cpp` | Android JNI 定位实现（heading 接口已就绪） |
-| `mainMacDesktop.mm` | macOS 入口，启用 Docking（L66） |
-| `xmake.lua` | 构建配置，`Frontend/*.cpp` 自动编译 |
-
-## 七、构建命令
-
-```bash
-# macOS
-xmake f -m releasedbg && xmake
-open pkg/NativeApp.app
-
-# Android
-xmake f -p android -a arm64-v8a && xmake
-```
+1. **GPS 原始高度不是海拔**：GPS 输出的是 WGS84 椭球面高度（ellipsoidal height），不是平均海平面高度（MSL）。两者差值（大地水准面差距 N）在某些地区可达数十米。**直接把 GPS altitude 当海拔用是错的。**
+2. **Android/iOS 平台差异**：iOS 的 CLLocation.altitude 通常已由 Apple 转换为 MSL；Android 的 GPS altitude 通常是原始 WGS84 椭球高，需要自己转换。部分 Android 设备厂商可能已经做了转换但标记不清晰，会导致双重转换。**不能假设任何平台返回的高度类型，需要明确确认。**
+3. **在线高程 API 不适合高海拔无网络场景**：虽然"GPS 经纬度 + 在线 geo 信息库"方向正确，但依赖网络的方案在核心场景下不可用。**必须用本地 EGM 模型替代在线查询。**
+4. **气压计不能单独提供绝对海拔**：气压计只能测量相对变化，要得到绝对海拔必须有一个外部基准（海平面气压值）。这个基准通常来自气象数据（需网络）或 GPS+EGM（可离线）。**不要指望单独用气压计得到绝对海拔。**

@@ -3,6 +3,7 @@
 #endif
 #include "../assets/fonts/fa_solid_900.cpp"
 #include "imgui/imgui_internal.h"
+#include "implot.h"
 #include "nlohmann/json.hpp"
 #include "IconsFontAwesome6.h"
 #include "Frontend/Frontend.h"
@@ -39,6 +40,55 @@ static std::string MacBundleResourcePath(const char* relative)
 }
 #endif
 
+namespace {
+
+// 每屏顶部 header（标题 / 位置 / 设置入口）。screen 传引用，齿轮可跳转到设置屏。
+void DrawHeader(Screen& screen, const LocationData& data)
+{
+    ImVec2 o = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+
+    auto text = [](const char* label, float scale, const ImVec4& col, float x, float y) {
+        ImGui::SetWindowFontScale(scale);
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
+        ImGui::TextColored(col, "%s", label);
+        ImGui::SetWindowFontScale(1.0f);
+    };
+
+    if (screen == Screen::Realtime)
+    {
+        text("当前位置", 0.8f, ImVec4(0.39f, 0.46f, 0.56f, 1.0f), o.x, o.y + 2.0f);
+        const char* val = data.valid ? "玉龙雪山 · 东麓" : "等待定位…";
+        text(val, 1.0f, ImVec4(0.97f, 0.98f, 0.99f, 1.0f), o.x, o.y + 18.0f);
+        // 右上角齿轮 -> 设置
+        ImGui::SetCursorScreenPos(ImVec2(o.x + w - 32.0f, o.y));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.08f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.14f));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(100, 116, 139, 255));
+        if (ImGui::Button(ICON_FA_GEAR, ImVec2(32, 32)))
+            screen = Screen::Settings;
+        ImGui::PopStyleColor(4);
+    }
+    else if (screen == Screen::Records)
+    {
+        text("运动记录", 1.6f, ImVec4(0.97f, 0.98f, 0.99f, 1.0f), o.x, o.y);
+        text("本月 3 条轨迹", 0.8f, ImVec4(0.39f, 0.46f, 0.56f, 1.0f), o.x, o.y + 26.0f);
+    }
+    else if (screen == Screen::Map)
+    {
+        text("地图", 1.6f, ImVec4(0.97f, 0.98f, 0.99f, 1.0f), o.x, o.y);
+        text("玉龙雪山 · 东麓", 0.8f, ImVec4(0.39f, 0.46f, 0.56f, 1.0f), o.x, o.y + 26.0f);
+    }
+    else // Settings
+    {
+        text("设置", 1.6f, ImVec4(0.97f, 0.98f, 0.99f, 1.0f), o.x, o.y);
+        text("单位 · 定位 · 显示", 0.8f, ImVec4(0.39f, 0.46f, 0.56f, 1.0f), o.x, o.y + 26.0f);
+    }
+}
+
+} // namespace
+
 Frontend &Frontend::Instance()
 {
     static Frontend sl_Instance;
@@ -60,6 +110,12 @@ int Frontend::init(float vFontSize, float vGlobalScale)
 
 #endif
     StyleManager::SelectTheme(StyleManager::MStyle_t::CLASSIC_STYLE);
+
+    // ImPlot（趋势图）上下文：必须与 ImGui 共享同一 ImGuiContext。
+    // imgui 编为独立 libimgui.{dylib,so} 共享库，跨模块需显式指定，否则 implot 取不到上下文。
+    ImPlot::CreateContext();
+    ImPlot::SetImGuiContext(ImGui::GetCurrentContext());
+
     Backend::Instance().init();
 
     return 0;
@@ -69,110 +125,94 @@ void Frontend::update()
 {
     ImGuiIO& io = ImGui::GetIO();
 
-    // 相框尺寸常量（仅 Android 生效；其余平台为 0，保持原铺满行为）
-#ifdef __ANDROID__
-    const float kFrameEdge = 10.0f;       // 相框边缘厚度（绘制在窗口边框上）
-    const float kFrameRounding = 26.0f;   // 相框圆角半径
-#else
-    const float kFrameEdge = 0.0f;
-    const float kFrameRounding = 0.0f;
-#endif
-
-    // Android 安全区：改用固定、克制的安全边距，避免依赖 ROM 圆角半径（常被报得过大）
-#ifdef __ANDROID__
-    // 固定四边内边距：把主体收进“安全矩形”，并叠加【相框 + 景深】视觉
-    float margin = ImMin(io.DisplaySize.x, io.DisplaySize.y) * 0.045f;
-    margin = ImClamp(margin, 28.0f, 64.0f);
-    ImVec2 frameMin(margin, margin);
-    ImVec2 frameMax(io.DisplaySize.x - margin, io.DisplaySize.y - margin);
-
-    ImDrawList* bg = ImGui::GetBackgroundDrawList();
-    // 1) 墙面：上深蓝灰 -> 下近黑的纵向渐变（相框背后的“墙”）
-    bg->AddRectFilledMultiColor(ImVec2(0.0f, 0.0f), io.DisplaySize,
-        IM_COL32(20, 26, 36, 255), IM_COL32(20, 26, 36, 255),
-        IM_COL32(7, 9, 13, 255),   IM_COL32(7, 9, 13, 255));
-    // 2) 暗角 vignette：边缘压暗、中心保留，强化景深（随时间轻微漂移，产生视差）
-    {
-        float t = (float)ImGui::GetTime();
-        float cx = io.DisplaySize.x * 0.5f + sinf(t * 0.25f) * 10.0f;
-        float cy = io.DisplaySize.y * 0.5f + cosf(t * 0.21f) * 10.0f;
-        float baseR = 0.58f * sqrtf(io.DisplaySize.x * io.DisplaySize.x + io.DisplaySize.y * io.DisplaySize.y);
-        const int steps = 6;
-        for (int i = steps; i >= 1; --i)
-        {
-            // f 越大越靠外、alpha 越高 -> 边角更暗，形成暗角
-            float f = (float)i / (float)steps;
-            bg->AddCircleFilled(ImVec2(cx, cy), baseR * f, IM_COL32(0, 0, 0, (int)(20.0f * f)), 64);
-        }
-    }
-    // 3) 相框柔和投影：多层渐隐外扩，模拟光源自上而下的悬浮景深
-    for (int i = 7; i >= 1; --i)
-    {
-        float e = (float)i * 3.0f;
-        float a = (float)(8 - i) * 5.0f;
-        float offY = e * 0.5f + 4.0f;
-        bg->AddRectFilled(ImVec2(frameMin.x - e, frameMin.y - e * 0.5f),
-                          ImVec2(frameMax.x + e, frameMax.y + e + offY),
-                          IM_COL32(0, 0, 0, (int)ImClamp(a, 0.0f, 60.0f)),
-                          kFrameRounding + e, 0);
-    }
-#endif
     // 检测本帧是否有用户交互（鼠标移动/按键/修饰键），刷新活跃时间戳
     bool active = (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f);
     for (int i = 0; i < 5 && !active; ++i) active = active || io.MouseDown[i];
     active = active || io.KeyCtrl || io.KeyShift || io.KeyAlt || io.KeySuper;
     if (active) m_lastActiveTime = std::chrono::steady_clock::now();
 
-    // 根窗口 = 相框内芯：圆角 + 画框边缘 + 内边距（让控件自然收敛、留出“画框”呼吸感）
-    // macOS 保持半透明毛玻璃；Android 改为不透明画框画布
+    // 根窗口铺满整屏：macOS 半透明毛玻璃；Android 不透明深色画布；不做任何边框/景深装饰
 #if defined(__APPLE__)
     ImGuiStyle& stk = ImGui::GetStyle();
     const ImVec4& wbg = stk.Colors[ImGuiCol_WindowBg];
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(wbg.x, wbg.y, wbg.z, 0.3f));
 #elif defined(__ANDROID__)
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.063f, 0.078f, 0.110f, 1.0f)); // ~ (16,20,28) 画布
-    ImGui::PushStyleColor(ImGuiCol_Border,   ImVec4(0.43f, 0.46f, 0.52f, 1.0f));     // ~ (110,118,132) 画框边缘
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.063f, 0.078f, 0.110f, 1.0f)); // ~ (16,20,28)
 #endif
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, kFrameEdge);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   kFrameRounding);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(16.0f, 16.0f));
+    // 根窗口留白：Android 走安全区+零边距铺满，四周不留 padding；macOS 保留 16px 呼吸留白
+    const ImVec2 kRootPad = ImVec2(
+#if defined(__ANDROID__)
+        0.0f, 0.0f
+#else
+        16.0f, 16.0f
+#endif
+    );
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    kRootPad);
     ImGui::Begin("h e l l o", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
 
-    // 定位：Android 收进相框安全矩形；其余平台铺满整屏
+    // 定位：Android 仅顶部按系统安全区避让状态栏/挖孔，左右与底部彻底零边距铺满；其余平台铺满整屏
 #ifdef __ANDROID__
-    ImGui::SetWindowPos(frameMin);
-    ImGui::SetWindowSize(ImVec2(frameMax.x - frameMin.x, frameMax.y - frameMin.y));
-    // 内芯顶部微光（画布受光感，强化景深）
-    {
-        ImDrawList* wdl = ImGui::GetWindowDrawList();
-        ImVec2 p0 = ImGui::GetWindowPos();
-        ImVec2 wsz = ImGui::GetWindowSize();
-        ImVec2 p1 = ImVec2(p0.x + wsz.x, p0.y + wsz.y);
-        wdl->AddRectFilledMultiColor(p0, p1,
-            IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 16),
-            IM_COL32(255, 255, 255, 0),  IM_COL32(255, 255, 255, 0));
-    }
+    float safeTop = 0.0f, safeRight = 0.0f, safeBottom = 0.0f, safeLeft = 0.0f;
+    AndroidGetSafeInsets(safeTop, safeRight, safeBottom, safeLeft);
+    ImGui::SetWindowPos(ImVec2(0.0f, safeTop));
+    ImGui::SetWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y - safeTop));
 #else
     ImGui::SetWindowPos(ImVec2(0, 0));
     ImGui::SetWindowSize(io.DisplaySize);
 #endif
 
-    // -- 海拔高度显示（4 模式 + 动效）--
+    // 数据取融合结果（GPS+EGM 绝对基准 ⊕ 气压计相对变化）；无气压计时等同纯 GPS
     LocationProvider& loc = Backend::Instance().location();
-    LocationData data = loc.lastKnown();
+    LocationData data = Backend::Instance().currentFused();
     LocationStatus st = loc.status();
 
-    // 委托 AltitudeDisplay 绘制；返回 true 表示有按钮交互，刷新空闲计时
-    if (m_altDisplay.render(data, st, loc, io.DisplaySize))
-        m_lastActiveTime = std::chrono::steady_clock::now();
+    // 子区域不再叠加 WindowPadding（padding 已由根窗口统一控制），仅按内容自适应高度
+    const ImGuiChildFlags kFlagsAuto = ImGuiChildFlags_AutoResizeY;
+
+    // 顶部每屏 header
+    ImGui::BeginChild("##header", ImVec2(0, 0), kFlagsAuto);
+    DrawHeader(m_screen, data);
+    ImGui::EndChild();
+
+    // 主体内容区（弹性填满剩余；记录/设置内容超长时可滚动）
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    const ImGuiStyle& sty = ImGui::GetStyle();
+    float tabEst = 56.0f + sty.WindowPadding.y * 2.0f + sty.ItemSpacing.y;
+    float bodyH = ImMax(avail.y - tabEst, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::BeginChild("##body", ImVec2(0, bodyH), ImGuiChildFlags_None);
+    {
+        bool interacted = false;
+        switch (m_screen)
+        {
+            case Screen::Realtime: interacted = m_realtime.render(data, st, loc, io.DisplaySize); break;
+            case Screen::Records:  interacted = m_records.render(data, st, loc, io.DisplaySize); break;
+            case Screen::Map:      interacted = m_map.render(data, st, loc, io.DisplaySize); break;
+            case Screen::Settings: interacted = m_settings.render(data, st, loc, io.DisplaySize); break;
+        }
+        if (interacted)
+            m_lastActiveTime = std::chrono::steady_clock::now();
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+
+    // 底部导航（pill）
+    ImGui::BeginChild("##tabbar", ImVec2(0, 0), kFlagsAuto);
+    {
+        Screen clicked = NavBar::render(m_screen);
+        if (clicked != m_screen)
+        {
+            m_screen = clicked;
+            m_lastActiveTime = std::chrono::steady_clock::now();
+        }
+    }
+    ImGui::EndChild();
 
     ImGui::End();
     ImGui::PopStyleVar(3);   // WindowBorderSize + WindowRounding + WindowPadding
-#if defined(__APPLE__)
-    ImGui::PopStyleColor(1); // 仅 WindowBg
-#elif defined(__ANDROID__)
-    ImGui::PopStyleColor(2); // WindowBg + Border
-#endif
+    ImGui::PopStyleColor(1); // WindowBg
 
 }
 

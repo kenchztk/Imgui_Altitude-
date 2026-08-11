@@ -36,8 +36,8 @@ Screen NavBar::render(Screen current)
     ImVec2 pN = ImVec2(p0.x + sideMargin, p0.y);
     float navW = w - sideMargin * 2.0f;
 
-    // 整条胶囊背景（分段高亮与文字由 DrawSegmented 绘制）
-    UI::DrawRoundedRect(pN, ImVec2(pN.x + navW, pN.y + barH), IM_COL32(21, 27, 39, 255), barH * 0.5f);
+    // 整条胶囊背景（分段高亮与文字由 DrawSegmented 绘制）；半透明实现伪玻璃通透
+    UI::DrawRoundedRect(pN, ImVec2(pN.x + navW, pN.y + barH), IM_COL32(21, 27, 39, 180), barH * 0.5f);
 
     std::string navLabels[kCount];
     const char* labels[kCount];

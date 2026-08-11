@@ -44,6 +44,26 @@ adb shell am start -n kench1994.github.io/kench1994.github.io.MainActivity
 - APK 的 `jniLibs` 直接指向 `libs`（`sourceSets.main.jniLibs.srcDirs = ['libs']`），所以只要 xmake 把最新 `.so` 拷进去，Gradle 打包即自动带上，无需其他配置。
 - 改 native 代码后必须依次：`xmake` → `assembleDebug` → `adb install -r`，缺一步真机看到的都是旧版。
 
+### Android 无线调试（无需 USB 装包）
+
+设备无需每次插 USB，连同一 WiFi 后通过 adb over TCP 装包/启动：
+
+```bash
+# 首次（设备需先 USB 连一次，开启 adb TCP 端口；重启后会恢复 USB 模式需重新执行）
+adb tcpip 5555
+# 之后连 WiFi 即可
+adb connect 192.168.20.63:5555
+adb devices                       # 应显示 192.168.20.63:5555 device
+
+# 无线装包 / 启动
+adb -s 192.168.20.63:5555 install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s 192.168.20.63:5555 shell am start -n kench1994.github.io/kench1994.github.io.MainActivity
+```
+
+真机信息：
+- 设备序列号 `PFPJHEGMJFQCKFUC`；Android 16（SDK 36）；IP `192.168.20.63`（WiFi，可能变化，用前 `adb shell ip addr show wlan0` 确认）
+- 若设备无「无线调试」选项（Android 10 及以下），用 `adb tcpip 5555` + `adb connect <IP>:5555` 传统方式。
+
 xmake 全局配置中如设了代理（`xmake g --proxy=...`），下载依赖失败时可临时 `xmake g --proxy=""` 清空。
 
 ## 架构与关键文件

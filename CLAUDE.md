@@ -21,6 +21,29 @@ xmake f -p android -a arm64-v8a && xmake
 # 产物自动拷到 android/app/libs/arm64-v8a/，EGM96 系数已编译进二进制无需额外数据
 ```
 
+### Android 打包发布流程（native .so → APK → 真机）
+
+xmake 只产出 `.so`（`after_build` 自动拷到 `android/app/libs/arm64-v8a/`），真正要安装到真机还需 Gradle 打包成 APK。整套流程：
+
+```bash
+cd android
+
+# 1) gradle 不在 PATH，直接复用 wrapper 分发包里的二进制（版本见 gradle/wrapper/gradle-wrapper.properties）
+GRADLE_BIN=$(ls ~/.gradle/wrapper/dists/gradle-9.3.1-bin/*/gradle-9.3.1/bin/gradle)
+
+# 2) 打包 Debug APK（产出 app/build/outputs/apk/debug/app-debug.apk）
+"$GRADLE_BIN" assembleDebug --console=plain
+
+# 3) 安装并启动（先 adb devices 确认真机已连接）
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n kench1994.github.io/kench1994.github.io.MainActivity
+```
+
+说明：
+- Android 工程无 `gradlew` 脚本，`gradle` 也不在 PATH，需用上述方式定位 wrapper 分发包的二进制；Gradle 版本升级时同步改路径。
+- APK 的 `jniLibs` 直接指向 `libs`（`sourceSets.main.jniLibs.srcDirs = ['libs']`），所以只要 xmake 把最新 `.so` 拷进去，Gradle 打包即自动带上，无需其他配置。
+- 改 native 代码后必须依次：`xmake` → `assembleDebug` → `adb install -r`，缺一步真机看到的都是旧版。
+
 xmake 全局配置中如设了代理（`xmake g --proxy=...`），下载依赖失败时可临时 `xmake g --proxy=""` 清空。
 
 ## 架构与关键文件

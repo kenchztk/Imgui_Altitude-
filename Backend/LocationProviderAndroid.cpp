@@ -205,6 +205,22 @@ void AndroidGetSafeInsets(float& top, float& right, float& bottom, float& left)
     top = g_SafeTop; right = g_SafeRight; bottom = g_SafeBottom; left = g_SafeLeft;
 }
 
+// 底部两角圆角半径（供底部导航内收避让圆角），由 Kotlin 经 JNI 回传；单位 px
+static float g_BottomCornerRadius = 0.0f;
+
+// 签名 (F)V：radius（设备像素）
+static void JNICALL nativeSetBottomCornerRadius(JNIEnv* /*env*/, jobject /*thiz*/, jfloat radius)
+{
+    g_BottomCornerRadius = radius;
+    spdlog::info("[Corner] 底部圆角半径 radius={}", radius);
+}
+
+// 供 Frontend 读取底部圆角半径
+float AndroidGetBottomCornerRadius()
+{
+    return g_BottomCornerRadius;
+}
+
 // 由 platform/android/Main.cpp 的 Init() 调用：记录 app 并把 native 方法注册到 MainActivity 类
 bool RegisterLocationNatives(android_app* app)
 {
@@ -228,6 +244,7 @@ bool RegisterLocationNatives(android_app* app)
         {"nativeOnPermissionResult", "(Z)V",     (void*)nativeOnPermissionResult},
         {"nativeOnHeading",          "(D)V",     (void*)nativeOnHeading},
         {"nativeSetSafeAreaInsets",  "(FFFF)V",  (void*)nativeSetSafeAreaInsets},
+        {"nativeSetBottomCornerRadius", "(F)V",  (void*)nativeSetBottomCornerRadius},
     };
     jint res = env->RegisterNatives(clazz, methods, sizeof(methods) / sizeof(methods[0]));
     if (res != 0)

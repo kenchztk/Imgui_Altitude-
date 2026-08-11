@@ -10,6 +10,7 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.RoundedCorner
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -53,6 +54,16 @@ class MainActivity : NativeActivity() {
             nativeSetSafeAreaInsets(top.toFloat(), right.toFloat(), bottom.toFloat(), left.toFloat())
         } catch (e: UnsatisfiedLinkError) {
             // native 尚未完成 JNI 注册（极早期调用）时忽略，安全区暂留 0；下次 onWindowFocusChanged 会补传
+        }
+        // 底部两角圆角半径（API 31+），供 native 的底部导航内收避让圆角；仅取底部，不影响其他安全区
+        var bottomCorner = 0
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            fun r(pos: Int): Int = insets.getRoundedCorner(pos)?.radius ?: 0
+            bottomCorner = maxOf(r(RoundedCorner.POSITION_BOTTOM_LEFT), r(RoundedCorner.POSITION_BOTTOM_RIGHT))
+        }
+        try {
+            nativeSetBottomCornerRadius(bottomCorner.toFloat())
+        } catch (e: UnsatisfiedLinkError) {
         }
     }
 
@@ -109,6 +120,8 @@ class MainActivity : NativeActivity() {
 
     // 安全区（圆角/挖孔）内边距，由 Kotlin 读出后回传 native 供 ImGui 收敛进安全矩形
     external fun nativeSetSafeAreaInsets(top: Float, right: Float, bottom: Float, left: Float)
+    // 底部圆角半径，供 native 的底部导航内收避让圆角
+    external fun nativeSetBottomCornerRadius(radius: Float)
 
     private val LOCATION_REQ = 1001
     private var locationManager: LocationManager? = null

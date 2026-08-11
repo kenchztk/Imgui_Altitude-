@@ -179,7 +179,14 @@ void Frontend::update()
     // 主体内容区（弹性填满剩余；记录/设置内容超长时可滚动）
     ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImGuiStyle& sty = ImGui::GetStyle();
-    float tabEst = 56.0f + sty.WindowPadding.y * 2.0f + sty.ItemSpacing.y;
+    // 底部导航预留高度：与 NavBar 的 barH 保持一致（Android 80 / 桌面 56）
+    float tabBarH =
+#ifdef __ANDROID__
+        80.0f;
+#else
+        56.0f;
+#endif
+    float tabEst = tabBarH + sty.WindowPadding.y * 2.0f + sty.ItemSpacing.y;
     float bodyH = ImMax(avail.y - tabEst, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::BeginChild("##body", ImVec2(0, bodyH), ImGuiChildFlags_None);

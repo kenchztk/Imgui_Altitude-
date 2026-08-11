@@ -17,10 +17,27 @@ Screen NavBar::render(Screen current)
     Screen result = current;
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
-    float barH = 56.0f;
+    // 底部导航高度：Android 触控目标更大，加高到 80；桌面端保持 56
+    float barH =
+#ifdef __ANDROID__
+        80.0f;
+#else
+        56.0f;
+#endif
+
+    // Android 设备底部为圆角矩形：按系统圆角半径内缩导航栏并居中避让圆角；
+    // 圆角半径由 Kotlin 经 JNI 回传（AndroidGetBottomCornerRadius），另加少量余量
+#ifdef __ANDROID__
+    extern float AndroidGetBottomCornerRadius();
+    const float sideMargin = ImMin(AndroidGetBottomCornerRadius() + 8.0f, w * 0.25f);
+#else
+    const float sideMargin = 0.0f;
+#endif
+    ImVec2 pN = ImVec2(p0.x + sideMargin, p0.y);
+    float navW = w - sideMargin * 2.0f;
 
     // 整条胶囊背景（分段高亮与文字由 DrawSegmented 绘制）
-    UI::DrawRoundedRect(p0, ImVec2(p0.x + w, p0.y + barH), IM_COL32(21, 27, 39, 255), barH * 0.5f);
+    UI::DrawRoundedRect(pN, ImVec2(pN.x + navW, pN.y + barH), IM_COL32(21, 27, 39, 255), barH * 0.5f);
 
     std::string navLabels[kCount];
     const char* labels[kCount];
@@ -36,7 +53,19 @@ Screen NavBar::render(Screen current)
     st.inset  = 4.0f;                  // 选中高亮在段内收缩 4px
     st.rounding = (barH - 8.0f) * 0.5f;
 
-    int sel = Segmented::Render(labels, kCount, (int)current, w, barH, st);
+    // 导航内容字号：Android 触控目标更大，放大图标+文字；桌面端保持原大小
+    const float navFontScale =
+#ifdef __ANDROID__
+        1.15f;
+#else
+        1.0f;
+#endif
+    if (navFontScale != 1.0f)
+        ImGui::SetWindowFontScale(navFontScale);
+    ImGui::SetCursorScreenPos(pN);
+    int sel = Segmented::Render(labels, kCount, (int)current, navW, barH, st);
+    if (navFontScale != 1.0f)
+        ImGui::SetWindowFontScale(1.0f);
     if (sel != (int)current)
         result = (Screen)sel;
 

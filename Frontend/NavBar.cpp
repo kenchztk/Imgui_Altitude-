@@ -69,6 +69,5 @@ Screen NavBar::render(Screen current)
     if (sel != (int)current)
         result = (Screen)sel;
 
-    ImGui::Spacing();
     return result;
 }

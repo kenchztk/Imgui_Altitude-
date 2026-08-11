@@ -178,15 +178,15 @@ void Frontend::update()
 
     // 主体内容区（弹性填满剩余；记录/设置内容超长时可滚动）
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    const ImGuiStyle& sty = ImGui::GetStyle();
-    // 底部导航预留高度：与 NavBar 的 barH 保持一致（Android 80 / 桌面 56）
+    // 底部导航预留高度：tabbar 子窗口用 kFlagsAuto（不叠加 padding），实际高度即 barH，
+    // 故 tabEst 直接取 tabBarH 即可，避免多预留造成导航下方空白
     float tabBarH =
 #ifdef __ANDROID__
         80.0f;
 #else
         56.0f;
 #endif
-    float tabEst = tabBarH + sty.WindowPadding.y * 2.0f + sty.ItemSpacing.y;
+    float tabEst = tabBarH;
     float bodyH = ImMax(avail.y - tabEst, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::BeginChild("##body", ImVec2(0, bodyH), ImGuiChildFlags_None);

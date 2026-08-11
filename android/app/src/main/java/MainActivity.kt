@@ -10,7 +10,6 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
-import android.view.RoundedCorner
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -42,26 +41,13 @@ class MainActivity : NativeActivity() {
         }
     }
 
-    // 读取系统安全区（圆角 + 挖孔/刘海），回传给 native 供 ImGui 收敛进安全矩形
+    // 读取顶部刘海/挖孔安全区，回传给 native 供 ImGui 顶部避让；不处理四角圆角
     private fun pushSafeAreaInsets() {
         val insets = window.decorView.rootWindowInsets ?: return
         var top = 0; var right = 0; var bottom = 0; var left = 0
-        // 挖孔/刘海安全区（API 29+）
+        // 仅取顶部刘海/挖孔高度（API 29+）；左右/底部始终 0
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            insets.displayCutout?.let { c ->
-                top = maxOf(top, c.safeInsetTop)
-                right = maxOf(right, c.safeInsetRight)
-                bottom = maxOf(bottom, c.safeInsetBottom)
-                left = maxOf(left, c.safeInsetLeft)
-            }
-        }
-        // 屏幕四角圆角半径（API 31+）：每个角向相邻两条边各贡献其半径
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            fun r(pos: Int): Int = insets.getRoundedCorner(pos)?.radius ?: 0
-            top = maxOf(top, maxOf(r(RoundedCorner.POSITION_TOP_LEFT), r(RoundedCorner.POSITION_TOP_RIGHT)))
-            bottom = maxOf(bottom, maxOf(r(RoundedCorner.POSITION_BOTTOM_LEFT), r(RoundedCorner.POSITION_BOTTOM_RIGHT)))
-            left = maxOf(left, maxOf(r(RoundedCorner.POSITION_TOP_LEFT), r(RoundedCorner.POSITION_BOTTOM_LEFT)))
-            right = maxOf(right, maxOf(r(RoundedCorner.POSITION_TOP_RIGHT), r(RoundedCorner.POSITION_BOTTOM_RIGHT)))
+            top = insets.displayCutout?.safeInsetTop ?: 0
         }
         try {
             nativeSetSafeAreaInsets(top.toFloat(), right.toFloat(), bottom.toFloat(), left.toFloat())
